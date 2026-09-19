@@ -461,7 +461,32 @@ export const Sidebar: React.FC = () => {
 
       {/* File Tree Structure */}
       <div className="flex-1 overflow-y-auto py-1 text-xs">
-        {renderTree(fileTree)}
+        {files.length === 0 ? (
+          <div className="p-4 text-center text-slate-500 text-xs flex flex-col items-center gap-3 select-none">
+            <p className="text-slate-400">No files in workspace</p>
+            <div className="flex flex-col gap-2 w-full pt-1">
+              <button
+                onClick={() => {
+                  setTargetFolder('src');
+                  setIsCreatingFile(true);
+                }}
+                className="w-full py-1.5 px-2 rounded bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 border border-blue-500/30 text-xs font-mono flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <FilePlus className="w-3.5 h-3.5" />
+                <span>New File</span>
+              </button>
+              <button
+                onClick={handleSelectFolder}
+                className="w-full py-1.5 px-2 rounded bg-[#162035] hover:bg-[#1d2b47] text-slate-300 border border-[#233354] text-xs font-mono flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-blue-400" />
+                <span>Open Folder</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          renderTree(fileTree)
+        )}
       </div>
 
       {/* Collapsible Sections at Bottom of Sidebar */}
@@ -482,8 +507,13 @@ export const Sidebar: React.FC = () => {
         </div>
         {outlineOpen && (
           <div className="px-5 py-2 text-[11px] font-mono text-slate-400 space-y-1 bg-[#090d16]">
-            <div className="hover:text-cyan-300 cursor-pointer">ƒ cbm_cypher_execute</div>
-            <div className="hover:text-cyan-300 cursor-pointer">ƒ cbm_cypher_parse</div>
+            {files.find(f => f.id === activeFileId)?.symbols?.length ? (
+              files.find(f => f.id === activeFileId)!.symbols!.map(sym => (
+                <div key={sym.id} className="hover:text-blue-300 cursor-pointer">ƒ {sym.name}</div>
+              ))
+            ) : (
+              <div className="text-slate-500">No symbols found</div>
+            )}
           </div>
         )}
 

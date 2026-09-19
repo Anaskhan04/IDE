@@ -2,7 +2,20 @@ import React from 'react';
 import { useIDE } from '../../context/IDEContext';
 
 export const StatusBar: React.FC = () => {
-  const { masterPrompt, mcpServers } = useIDE();
+  const { masterPrompt, mcpServers, files, activeFileId } = useIDE();
+
+  const activeFile = files.find(f => f.id === activeFileId);
+  const languageLabel = activeFile
+    ? (activeFile.name.endsWith('.c') || activeFile.name.endsWith('.h')
+        ? 'C'
+        : activeFile.name.endsWith('.ts') || activeFile.name.endsWith('.tsx')
+        ? 'TypeScript'
+        : activeFile.language.toUpperCase())
+    : 'Plain Text';
+
+  const shortLang = activeFile
+    ? (activeFile.name.endsWith('.c') || activeFile.name.endsWith('.h') ? 'C' : 'TS')
+    : '--';
 
   const connectedMcpCount = mcpServers.filter(s => s.status === 'connected').length || 5;
   const totalMcpCount = mcpServers.length || 5;
@@ -74,7 +87,7 @@ export const StatusBar: React.FC = () => {
         </div>
 
         {/* Language Mode */}
-        <div className="text-blue-400 font-bold font-mono">C</div>
+        <div className="text-blue-400 font-bold font-mono">{shortLang}</div>
 
         {/* Encoding & EOL */}
         <div className="hover:text-slate-200 cursor-pointer">UTF-8</div>
@@ -83,7 +96,7 @@ export const StatusBar: React.FC = () => {
         {/* Curly Bracket Syntax */}
         <div className="flex items-center gap-1 hover:text-slate-200 cursor-pointer">
           <span className="font-mono text-slate-400">{'{ }'}</span>
-          <span>C</span>
+          <span>{languageLabel}</span>
         </div>
       </div>
     </footer>

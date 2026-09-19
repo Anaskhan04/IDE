@@ -92,78 +92,45 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [activeView, setActiveView] = useState<ActiveView>('editor'); // Default to Code Editor (Knowledge Graph disabled)
   const [currentProjectId, setCurrentProjectIdState] = useState<ProjectId>('codebase-memory-mcp');
   
-  // Initialize with codebase-memory-mcp repository data by default!
-  const [files, setFiles] = useState<ProjectFile[]>(CBM_REPO_FILES);
-  const [activeFileId, setActiveFileId] = useState<string>('cbm-cypher');
-  const [openFileIds, setOpenFileIds] = useState<string[]>(['cbm-cypher', 'cbm-mcp', 'cbm-main']);
+  // Workspace starts clean and empty!
+  const [files, setFiles] = useState<ProjectFile[]>([]);
+  const [activeFileId, setActiveFileId] = useState<string>('');
+  const [openFileIds, setOpenFileIds] = useState<string[]>([]);
   const [activeModel, setActiveModel] = useState<AIModel>(AVAILABLE_MODELS[0]);
   const [masterPrompt, setMasterPrompt] = useState<MasterPromptData>({
     ...INITIAL_MASTER_PROMPT,
-    projectName: 'DeusData / codebase-memory-mcp',
-    version: 'v0.24.1 (Pure C)',
-    astVersion: 'CBM-AST-TREE-SITTER',
-    requirements: 'Native, extreme-performance code intelligence engine with persistent tree-sitter AST knowledge graph, Cypher query engine, BFS path tracer, and 99% token reduction for AI coding agents.'
+    projectName: 'workspace',
+    version: 'v0.24',
+    astVersion: 'AST-IDLE',
+    requirements: 'Clean workspace.'
   });
-  const [graphNodes, setGraphNodes] = useState<GraphNode[]>(CBM_GRAPH_NODES);
-  const [graphEdges, setGraphEdges] = useState<GraphEdge[]>(CBM_GRAPH_EDGES);
-  const [selectedGraphNode, setSelectedGraphNode] = useState<GraphNode | null>(CBM_GRAPH_NODES[1]); // cbm_cypher_execute
+  const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
+  const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
+  const [selectedGraphNode, setSelectedGraphNode] = useState<GraphNode | null>(null);
   const [ciaResult, setCiaResult] = useState<CIAResult>(CBM_CIA_RESULT);
   const [mcpServers, setMcpServers] = useState<MCPServer[]>(INITIAL_MCP_SERVERS);
   const [testSuites, setTestSuites] = useState<TestSuite[]>(INITIAL_TEST_SUITES);
   const [isExecutingTests, setIsExecutingTests] = useState<boolean>(false);
   const [experiments, setExperiments] = useState<EvaluationExperiment[]>(EVALUATION_EXPERIMENTS);
   const [isAnalyzingAST, setIsAnalyzingAST] = useState<boolean>(false);
-  const [tokensSaved, setTokensSaved] = useState<number>(245800);
+  const [tokensSaved, setTokensSaved] = useState<number>(0);
   const [isModelSwitchingModalOpen, setIsModelSwitchingModalOpen] = useState<boolean>(false);
   const [isCopilotOpen, setIsCopilotOpen] = useState<boolean>(false);
 
-  // Default cypher result for codebase-memory-mcp
-  const [cypherResult, setCypherResult] = useState<CypherQueryResult | null>({
-    query: 'MATCH (caller)-[:CALLS]->(f:Function) WHERE f.name = "cbm_cypher_execute" RETURN caller.label AS caller, caller.type AS kind, caller.file AS source',
-    executionTimeMs: 0.72,
-    columns: ['caller', 'kind', 'source'],
-    rows: [
-      { caller: 'mcp.c', kind: 'File / MCP Handler', source: 'src/mcp/mcp.c' },
-      { caller: 'cli.c', kind: 'File / CLI Runner', source: 'src/cli/cli.c' },
-      { caller: 'test_cypher.c', kind: 'Test Suite', source: 'tests/test_cypher.c' }
-    ]
-  });
+  const [cypherResult, setCypherResult] = useState<CypherQueryResult | null>(null);
   const [isExecutingCypher, setIsExecutingCypher] = useState(false);
-  
-  // Default trace result for codebase-memory-mcp
-  const [traceResult, setTraceResult] = useState<TracePathResult | null>({
-    symbol: 'cbm_cypher_execute',
-    direction: 'inbound',
-    depth: 3,
-    executionTimeMs: 0.58,
-    paths: [
-      { source: 'mcp.c (cbm_mcp_dispatch)', target: 'cbm_cypher_execute()', edge: 'CALLS', file: 'src/mcp/mcp.c', line: 38 },
-      { source: 'cli.c (cbm_cli_execute_tool)', target: 'cbm_cypher_execute()', edge: 'CALLS', file: 'src/cli/cli.c', line: 52 },
-      { source: 'test_cypher.c (test_match_pattern)', target: 'cbm_cypher_execute()', edge: 'TESTS', file: 'tests/test_cypher.c', line: 120 }
-    ]
-  });
+  const [traceResult, setTraceResult] = useState<TracePathResult | null>(null);
   const [isTracingPath, setIsTracingPath] = useState(false);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
-      id: 'msg-init-cbm',
+      id: 'msg-init',
       sender: 'assistant',
       model: 'Claude 3.5 Sonnet',
-      content: `**IntelliCode Knowledge Graph Active for \`DeusData/codebase-memory-mcp\`.**
-
-Loaded complete architectural knowledge graph from \`https://github.com/DeusData/codebase-memory-mcp.git\`:
-- **Core C Architecture**:
-  - \`src/main.c\` (Entry point & dispatcher)
-  - \`src/cypher/cypher.c\` (Cypher query engine & parser)
-  - \`src/mcp/mcp.c\` (MCP JSON-RPC 2.0 protocol server with 15 tools)
-  - \`src/store/store.c\` (In-memory SQLite graph store & zstd VACUUM)
-  - \`src/traces/traces.c\` (BFS call path traversal & OTLP)
-  - \`src/daemon/daemon.c\` (Session coordination daemon)
-- **Knowledge Graph**: 16 Nodes, 13 Edges with 5 Louvain community clusters.
-- **Sub-millisecond Queries**: Query the graph via Cypher or BFS call path tracing!`,
-      timestamp: '10:00 AM',
-      tokensUsed: 380,
-      tokensSaved: 38500,
+      content: 'Workspace ready. Create a file or open a local folder to begin.',
+      timestamp: 'Just now',
+      tokensUsed: 0,
+      tokensSaved: 0,
       contextContinuity: true
     }
   ]);
@@ -228,8 +195,8 @@ Loaded complete architectural knowledge graph from \`https://github.com/DeusData
   const closeFile = (fileId: string) => {
     const nextOpen = openFileIds.filter(id => id !== fileId);
     setOpenFileIds(nextOpen);
-    if (activeFileId === fileId && nextOpen.length > 0) {
-      setActiveFileId(nextOpen[nextOpen.length - 1]);
+    if (activeFileId === fileId) {
+      setActiveFileId(nextOpen.length > 0 ? nextOpen[nextOpen.length - 1] : '');
     }
   };
 
