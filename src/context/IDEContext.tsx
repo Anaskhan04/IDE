@@ -67,6 +67,8 @@ interface IDEContextType {
   tokensSaved: number;
   isModelSwitchingModalOpen: boolean;
   setIsModelSwitchingModalOpen: (open: boolean) => void;
+  isCopilotOpen: boolean;
+  setIsCopilotOpen: (open: boolean) => void;
   
   // codebase-memory-mcp features
   cypherResult: CypherQueryResult | null;
@@ -113,6 +115,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isAnalyzingAST, setIsAnalyzingAST] = useState<boolean>(false);
   const [tokensSaved, setTokensSaved] = useState<number>(245800);
   const [isModelSwitchingModalOpen, setIsModelSwitchingModalOpen] = useState<boolean>(false);
+  const [isCopilotOpen, setIsCopilotOpen] = useState<boolean>(false);
 
   // Default cypher result for codebase-memory-mcp
   const [cypherResult, setCypherResult] = useState<CypherQueryResult | null>({
@@ -604,6 +607,8 @@ Using persistent Knowledge Graph for **${masterPrompt.projectName}**:
         tokensSaved,
         isModelSwitchingModalOpen,
         setIsModelSwitchingModalOpen,
+        isCopilotOpen,
+        setIsCopilotOpen,
         cypherResult,
         isExecutingCypher,
         executeCypherQuery,

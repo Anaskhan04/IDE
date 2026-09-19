@@ -4,25 +4,38 @@
 
 @layer base {
   * {
-    border-color: #21293a;
+    border-color: #161d2c;
   }
   
-  /* Custom scrollbar */
+  /* Custom sleek dark scrollbars */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #252e40;
-    border-radius: 3px;
+    background: #1e293b;
+    border-radius: 4px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #37435b;
+    background: #334155;
   }
 }
+
+/* Subtle realistic code minimap visual lines */
+.minimap-line {
+  height: 2px;
+  margin-bottom: 2px;
+  border-radius: 1px;
+  opacity: 0.35;
+}
+.minimap-comment { background-color: #52637a; }
+.minimap-keyword { background-color: #f43f5e; }
+.minimap-func    { background-color: #38bdf8; }
+.minimap-str     { background-color: #fb923c; }
+.minimap-plain   { background-color: #94a3b8; }
 
 /* Pulse animation for active context */
 @keyframes glow-pulse {
@@ -36,7 +49,7 @@
 
 /* Subtle code background */
 .bg-code {
-  background-color: #0b0e14;
+  background-color: #0b0f19;
 }
 
 /* Glass panel */
@@ -45,3 +58,4 @@
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
+

@@ -1,23 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useIDE } from '../../context/IDEContext';
-import { 
-  FileCode, 
-  X, 
-  Play, 
-  ShieldAlert, 
-  GitFork, 
-  Save, 
-  Check, 
-  Copy, 
-  Plus, 
-  Folder, 
-  FilePlus, 
-  ExternalLink,
-  ChevronRight,
-  Code2,
-  Terminal,
-  Zap
-} from 'lucide-react';
 
 export const CodeEditor: React.FC = () => {
   const { 
@@ -29,18 +11,16 @@ export const CodeEditor: React.FC = () => {
     updateFileContent,
     saveFile,
     createFile,
-    setActiveView,
     ciaResult,
     runTests,
     isExecutingTests
   } = useIDE();
 
   const activeFile = files.find(f => f.id === activeFileId);
-  const [copied, setCopied] = useState(false);
   const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Handle keyboard shortcuts (Ctrl+S to save)
+  // Keyboard shortcut Ctrl+S
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -54,28 +34,20 @@ export const CodeEditor: React.FC = () => {
 
   if (!activeFile) {
     return (
-      <div className="flex-1 bg-code flex flex-col items-center justify-center text-slate-500 font-mono text-xs space-y-4">
-        <FileCode className="w-12 h-12 text-slate-700" />
+      <div className="flex-1 bg-[#0b0f19] flex flex-col items-center justify-center text-slate-500 font-mono text-xs space-y-4">
         <div className="text-center">
           <p className="text-slate-300 font-bold text-sm">No editor tab open</p>
           <p className="text-slate-500 mt-1">Select a file from the explorer or create a new file.</p>
         </div>
         <button
-          onClick={() => createFile('newFile.ts')}
-          className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
+          onClick={() => createFile('newFile.c', 'src')}
+          className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
         >
-          <Plus className="w-3.5 h-3.5" />
           <span>Create New File</span>
         </button>
       </div>
     );
   }
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(activeFile.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     updateFileContent(activeFile.id, e.target.value);
@@ -93,170 +65,178 @@ export const CodeEditor: React.FC = () => {
 
   const pathParts = activeFile.path.split('/');
   const lines = activeFile.content.split('\n');
-  const isModifiedService = activeFile.id === 'payment-service' || activeFile.id === 'cbm-cypher';
+  const isCFile = activeFile.name.endsWith('.c') || activeFile.name.endsWith('.h');
+  const isMain = activeFile.name === 'main.c';
 
   return (
-    <div className="flex-1 flex flex-col bg-code h-[calc(100vh-3.5rem-1.75rem)] overflow-hidden">
-      {/* VS Code Styled Tab Bar */}
-      <div className="flex items-center bg-ide-sidebar border-b border-ide-border overflow-x-auto select-none">
+    <main className="flex-1 flex flex-col bg-[#0b0f19] overflow-hidden" data-purpose="editor-workspace">
+      {/* Editor Tabs Bar */}
+      <div className="h-9 bg-[#080c14] flex items-center border-b border-[#161d2c] select-none overflow-x-auto">
         {openFileIds.map((fileId) => {
           const file = files.find(f => f.id === fileId);
           if (!file) return null;
           const isActive = file.id === activeFileId;
-          const isTarget = file.id === 'payment-service' || file.id === 'cbm-cypher';
+          const isFileMain = file.name === 'main.c';
+
+          if (isActive) {
+            return (
+              <div
+                key={file.id}
+                onClick={() => openFile(file.id)}
+                className="h-full bg-[#0b0f19] border-t-2 border-blue-500 border-r border-[#161d2c] flex items-center gap-2 px-3 text-xs text-white shrink-0 cursor-pointer"
+              >
+                <span className={`${isFileMain ? 'text-purple-400' : 'text-blue-400'} font-bold text-[11px] font-mono`}>
+                  C
+                </span>
+                <span className="font-medium">{file.name}</span>
+                {file.isDirty && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" title="Unsaved changes" />
+                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeFile(file.id);
+                  }}
+                  className="ml-1 text-slate-400 hover:text-white rounded p-0.5"
+                  title="Close tab"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path d="M6 18L18 6M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+                  </svg>
+                </button>
+              </div>
+            );
+          }
 
           return (
             <div
               key={file.id}
               onClick={() => openFile(file.id)}
-              className={`flex items-center gap-2 px-3 py-2 text-xs font-mono border-r border-ide-border cursor-pointer transition-colors border-t-2 group ${
-                isActive
-                  ? 'bg-code text-cyan-300 border-t-cyan-400 border-b-transparent'
-                  : 'bg-ide-panel/60 text-slate-400 hover:bg-ide-panel hover:text-slate-200 border-t-transparent'
-              }`}
+              className="h-full bg-[#080c14] border-r border-[#161d2c] flex items-center gap-2 px-3 text-xs text-slate-400 hover:text-slate-200 hover:bg-[#0d121f] transition-colors cursor-pointer group shrink-0"
             >
-              <FileCode className={`w-3.5 h-3.5 shrink-0 ${isTarget ? 'text-rose-400' : 'text-cyan-400'}`} />
-              <span className="truncate max-w-[130px]">{file.name}</span>
-
-              {/* Dirty or modified indicator */}
-              {file.isDirty ? (
-                <span className="w-2 h-2 rounded-full bg-cyan-400 shrink-0 group-hover:hidden" title="Unsaved changes" />
-              ) : isTarget ? (
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" title="Active CIA target" />
-              ) : null}
-
-              {/* Close Tab button */}
+              <span className={`${isFileMain ? 'text-purple-400' : 'text-blue-400'} font-bold text-[11px] font-mono`}>
+                C
+              </span>
+              <span>{file.name}</span>
+              {file.isDirty && (
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" title="Unsaved changes" />
+              )}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   closeFile(file.id);
                 }}
-                className={`p-0.5 rounded hover:bg-slate-700 text-slate-500 hover:text-white transition-colors ${
-                  file.isDirty ? 'hidden group-hover:block' : ''
-                }`}
+                className="ml-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-white"
                 title="Close tab"
               >
-                <X className="w-3 h-3" />
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path d="M6 18L18 6M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+                </svg>
               </button>
             </div>
           );
         })}
 
-        {/* Quick New File Tab Button */}
+        {/* New Tab Button */}
         <button
-          onClick={() => createFile('module.ts')}
-          className="p-2 text-slate-500 hover:text-cyan-400 hover:bg-ide-panel transition-colors"
-          title="New File (Ctrl+N)"
+          onClick={() => createFile('module.c', 'src')}
+          className="h-full px-2.5 text-slate-500 hover:text-slate-300 hover:bg-[#0f1422] transition-colors shrink-0"
+          title="New Tab"
         >
-          <Plus className="w-3.5 h-3.5" />
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+          </svg>
         </button>
       </div>
 
-      {/* VS Code Breadcrumb Bar */}
-      <div className="h-8 bg-ide-panel/80 border-b border-ide-border px-3 flex items-center justify-between text-xs font-mono text-slate-400 select-none">
-        <div className="flex items-center gap-1.5 truncate">
-          <Folder className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-          {pathParts.map((part, idx) => (
+      {/* Editor Breadcrumbs */}
+      <div className="h-6 px-3 bg-[#0b0f19] border-b border-[#141b29] flex items-center gap-1.5 text-[11.5px] text-slate-400 shrink-0">
+        {pathParts.map((part, idx) => {
+          const isLast = idx === pathParts.length - 1;
+          return (
             <React.Fragment key={idx}>
-              {idx > 0 && <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />}
-              <span className={idx === pathParts.length - 1 ? 'text-slate-200 font-semibold' : 'text-slate-400 hover:text-slate-200 cursor-pointer'}>
-                {part}
-              </span>
+              {idx > 0 && (
+                <svg className="w-3 h-3 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path d="M9 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+                </svg>
+              )}
+              {isLast ? (
+                <>
+                  <span className={`${isMain ? 'text-purple-400' : 'text-blue-400'} font-bold text-[11px] font-mono`}>
+                    C
+                  </span>
+                  <span className="text-slate-200 font-medium">{part}</span>
+                </>
+              ) : (
+                <span className="hover:text-slate-200 cursor-pointer">{part}</span>
+              )}
             </React.Fragment>
-          ))}
+          );
+        })}
+      </div>
+
+      {/* Change Impact Analysis (CIA) Notification Banner */}
+      <div className="m-2 px-3 py-1.5 bg-[#171410] border border-amber-600/40 rounded-md flex items-center justify-between text-xs shadow-sm shrink-0" data-purpose="cia-warning-banner">
+        <div className="flex items-center gap-2.5">
+          {/* Amber Shield Icon */}
+          <div className="text-amber-400">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M12 3v18m0-18C8 3 4 5 4 9c0 5 4 8 8 10 4-2 8-5 8-10 0-4-4-6-8-6z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+            </svg>
+          </div>
+          <div className="text-slate-300 flex items-center gap-1.5">
+            <span className="font-semibold text-amber-300">{activeFile.name}</span>
+            <span>is being analyzed by CIA (Change Impact Analysis)</span>
+          </div>
+          {/* Progress Bar */}
+          <div className="flex items-center gap-2 ml-4">
+            <div className="w-44 h-1.5 bg-[#2a241b] rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 rounded-full transition-all duration-300"
+                style={{ width: `${ciaResult.blastRadiusScore || 82}%` }}
+              ></div>
+            </div>
+            <span className="text-[11px] font-mono text-amber-300 font-medium">
+              {ciaResult.blastRadiusScore || 82}/100
+            </span>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Knowledge Graph disabled:
+        {/* Banner Action Buttons - Clickable, clean no-op on Inspect Blast Radius */}
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setActiveView('graph')}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-ide-card hover:bg-ide-hover border border-ide-border text-slate-300 hover:text-cyan-300 text-[11px] transition-colors"
-            title="Inspect in Knowledge Graph"
+            onClick={() => {}}
+            className="px-2.5 py-1 text-slate-300 hover:text-white bg-[#221c15] hover:bg-[#2b241d] border border-amber-500/30 rounded text-[11.5px] font-medium flex items-center gap-1.5 transition-colors cursor-pointer select-none active:scale-[0.98]"
+            title="Inspect Blast Radius"
           >
-            <GitFork className="w-3 h-3 text-cyan-400" />
-            <span className="hidden sm:inline">Graph</span>
+            <svg className="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M12 4v16m8-8H4" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
+            </svg>
+            <span>Inspect Blast Radius</span>
           </button>
-          */}
-
           <button
-            onClick={() => setActiveView('cia')}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[11px] transition-colors"
-            title="Change Impact Analysis"
+            onClick={() => runTests()}
+            disabled={isExecutingTests}
+            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[11.5px] font-medium flex items-center gap-1.5 shadow-[0_0_10px_rgba(37,99,235,0.4)] transition-all cursor-pointer select-none active:scale-[0.98]"
           >
-            <ShieldAlert className="w-3 h-3 text-amber-400" />
-            <span className="hidden sm:inline">Impact</span>
-          </button>
-
-          <button
-            onClick={handleCopy}
-            className="p-1 rounded bg-ide-card hover:bg-ide-hover border border-ide-border text-slate-400 hover:text-slate-200 transition-colors"
-            title="Copy Code"
-          >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-          </button>
-
-          <button
-            onClick={() => saveFile(activeFile.id)}
-            disabled={!activeFile.isDirty}
-            className={`flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-semibold transition-colors ${
-              activeFile.isDirty
-                ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm'
-                : 'bg-ide-card border border-ide-border text-slate-500'
-            }`}
-          >
-            <Save className="w-3 h-3" />
-            <span>{activeFile.isDirty ? 'Save (Ctrl+S)' : 'Saved'}</span>
+            <span>▷</span>
+            <span>{isExecutingTests ? 'Running...' : 'Run Tests'}</span>
           </button>
         </div>
       </div>
 
-      {/* Inline Change Impact Warning Banner (PDF Section 2.2) */}
-      {isModifiedService && (
-        <div className="bg-gradient-to-r from-rose-950/40 via-amber-950/30 to-ide-panel border-b border-amber-500/30 px-4 py-2 flex items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2">
-            <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-            <span className="text-slate-200">
-              <strong className="text-amber-300 font-mono">{activeFile.name}</strong> modification is being actively monitored by CIA.
-            </span>
-            <span className="text-[10px] font-mono px-2 py-0.2 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30">
-              Score: {ciaResult.blastRadiusScore}/100
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setActiveView('cia')}
-              className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[11px] font-mono hover:bg-amber-500/30"
-            >
-              Inspect Blast Radius
-            </button>
-            <button
-              onClick={() => {
-                setActiveView('validation');
-                runTests();
-              }}
-              disabled={isExecutingTests}
-              className="px-2.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold flex items-center gap-1"
-            >
-              <Play className="w-3 h-3" />
-              <span>{isExecutingTests ? 'Running...' : 'Run Tests'}</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Code Area with Live Typing & Line Numbers */}
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* Line Numbers Gutter */}
-        <div className="w-12 bg-code/90 py-3 text-right pr-3 text-slate-600 select-none border-r border-ide-border shrink-0 font-mono text-xs overflow-hidden leading-5">
+      {/* Code Surface & Minimap Area */}
+      <div className="flex-1 flex overflow-hidden font-mono text-[12.5px] leading-relaxed relative">
+        {/* Left Line Numbers Gutter */}
+        <div className="w-12 bg-[#0b0f19] text-[#3e4d68] text-right pr-3 select-none shrink-0 pt-2 text-[12px] font-mono space-y-[2px]">
           {lines.map((_, i) => (
-            <div key={i} className="h-5 leading-5 text-[11px]">
+            <div key={i} className="leading-5">
               {i + 1}
             </div>
           ))}
         </div>
 
-        {/* Live Editable Textarea Editor */}
+        {/* Code Content Area: Live Editable Monospace Textarea */}
         <textarea
           ref={textareaRef}
           value={activeFile.content}
@@ -265,26 +245,47 @@ export const CodeEditor: React.FC = () => {
           onKeyUp={(e) => updateCursorInfo(e.currentTarget)}
           onClick={(e) => updateCursorInfo(e.currentTarget)}
           spellCheck={false}
-          className="flex-1 bg-code text-slate-100 p-3 font-mono text-xs leading-5 resize-none focus:outline-none overflow-auto whitespace-pre selection:bg-cyan-500/30 selection:text-cyan-200 tab-size-2"
+          className="flex-1 bg-transparent text-slate-200 p-2 font-mono text-[12.5px] leading-5 resize-none focus:outline-none overflow-auto whitespace-pre selection:bg-blue-500/30 selection:text-blue-200 tab-size-2 border-none"
           style={{ tabSize: 2 }}
         />
-      </div>
 
-      {/* Bottom Editor Status Bar (VS Code Style) */}
-      <div className="h-6 bg-ide-panel border-t border-ide-border px-3 flex items-center justify-between text-[10px] font-mono text-slate-400 select-none">
-        <div className="flex items-center space-x-4">
-          <span>Ln {cursorPos.line}, Col {cursorPos.col}</span>
-          <span>Spaces: 2</span>
-          <span>UTF-8</span>
-        </div>
-
-        <div className="flex items-center space-x-3">
-          <span className="text-cyan-400 font-semibold uppercase">{activeFile.language}</span>
-          <span className="flex items-center gap-1 text-emerald-400">
-            <Zap className="w-3 h-3" /> AST Continuous Watcher
-          </span>
+        {/* Minimap (Right Column) */}
+        <div className="w-16 h-full bg-[#080c14]/70 border-l border-[#141b29] shrink-0 p-1 select-none pointer-events-none opacity-80 overflow-hidden" data-purpose="code-minimap">
+          <div className="minimap-line minimap-comment w-10"></div>
+          <div className="minimap-line minimap-comment w-12"></div>
+          <div className="minimap-line minimap-comment w-8"></div>
+          <div className="minimap-line minimap-comment w-11"></div>
+          <div className="minimap-line minimap-comment w-10"></div>
+          <div className="minimap-line minimap-comment w-9"></div>
+          <div className="minimap-line minimap-comment w-3"></div>
+          <div className="minimap-line w-0 my-1"></div>
+          <div className="minimap-line minimap-keyword w-7"></div>
+          <div className="minimap-line minimap-keyword w-6"></div>
+          <div className="minimap-line w-0 my-1"></div>
+          <div className="minimap-line minimap-func w-11"></div>
+          <div className="minimap-line minimap-plain w-8 ml-3"></div>
+          <div className="minimap-line minimap-keyword w-9 ml-2"></div>
+          <div className="minimap-line w-0 my-1"></div>
+          <div className="minimap-line minimap-plain w-7 ml-2"></div>
+          <div className="minimap-line minimap-plain w-6 ml-2"></div>
+          <div className="minimap-line w-0 my-1"></div>
+          <div className="minimap-line minimap-comment w-8 ml-2"></div>
+          <div className="minimap-line minimap-func w-11 ml-2"></div>
+          <div className="minimap-line minimap-keyword w-6 ml-2"></div>
+          <div className="minimap-line minimap-str w-10 ml-4"></div>
+          <div className="minimap-line minimap-keyword w-4 ml-4"></div>
+          <div className="minimap-line minimap-plain w-2 ml-2"></div>
+          <div className="minimap-line w-0 my-1"></div>
+          <div className="minimap-line minimap-comment w-12 ml-2"></div>
+          <div className="minimap-line minimap-func w-12 ml-2"></div>
+          <div className="minimap-line minimap-func w-6 ml-2"></div>
+          <div className="minimap-line minimap-keyword w-5 ml-2"></div>
+          <div className="minimap-line minimap-plain w-2"></div>
+          <div className="minimap-line minimap-func w-11"></div>
+          {/* Semi-transparent overlay visible rect */}
+          <div className="w-full h-24 bg-blue-500/10 border border-blue-400/20 rounded mt-2"></div>
         </div>
       </div>
-    </div>
+    </main>
   );
 };
