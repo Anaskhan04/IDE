@@ -1,61 +1,146 @@
+@import './styles/tokens.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   * {
-    border-color: #161d2c;
+    border-color: rgb(var(--ide-border) / 1);
   }
-  
-  /* Custom sleek dark scrollbars */
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+    height: 100%;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background: rgb(var(--ide-bg) / 1);
+    color: rgb(var(--ide-text) / 1);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  button,
+  [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--ide-focus) / 1);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: rgb(var(--ide-focus) / 0.32);
+    color: rgb(var(--ide-text-strong) / 1);
+  }
+
+  /* Precise dark scrollbars: separation comes from flat surfaces, not glow. */
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
   }
+
   ::-webkit-scrollbar-track {
     background: transparent;
   }
+
   ::-webkit-scrollbar-thumb {
-    background: #1e293b;
+    background: rgb(var(--ide-border-strong) / 0.8);
+    border: 2px solid transparent;
     border-radius: 4px;
+    background-clip: padding-box;
   }
+
   ::-webkit-scrollbar-thumb:hover {
-    background: #334155;
+    background: rgb(var(--ide-text-subtle) / 0.9);
+    background-clip: padding-box;
   }
 }
 
-/* Subtle realistic code minimap visual lines */
-.minimap-line {
-  height: 2px;
-  margin-bottom: 2px;
-  border-radius: 1px;
-  opacity: 0.35;
-}
-.minimap-comment { background-color: #52637a; }
-.minimap-keyword { background-color: #f43f5e; }
-.minimap-func    { background-color: #38bdf8; }
-.minimap-str     { background-color: #fb923c; }
-.minimap-plain   { background-color: #94a3b8; }
+@layer components {
+  .ide-text-title {
+    color: rgb(var(--ide-text-strong) / 1);
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
 
-/* Pulse animation for active context */
-@keyframes glow-pulse {
-  0%, 100% { opacity: 0.4; transform: scale(1); }
-  50% { opacity: 0.9; transform: scale(1.05); }
+  .ide-text-body {
+    color: rgb(var(--ide-text) / 1);
+    font-size: 0.75rem;
+    line-height: 1.5;
+  }
+
+  .ide-text-meta {
+    color: rgb(var(--ide-text-muted) / 1);
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+    font-size: 0.6875rem;
+    line-height: 1.4;
+  }
+
+  .ide-control {
+    border-radius: var(--ide-control-radius);
+    transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  }
+
+  .ide-panel {
+    border-radius: var(--ide-panel-radius);
+    background: rgb(var(--ide-panel) / 1);
+    border: 1px solid rgb(var(--ide-border) / 1);
+  }
+
+  .ide-focus-ring:focus-visible {
+    outline: 2px solid rgb(var(--ide-focus) / 1);
+    outline-offset: 2px;
+  }
+
+  .minimap-line {
+    height: 2px;
+    margin-bottom: 2px;
+    border-radius: 1px;
+    opacity: 0.55;
+  }
+
+  .minimap-comment { background-color: rgb(var(--ide-text-subtle) / 1); }
+  .minimap-keyword { background-color: rgb(var(--ide-rose) / 0.9); }
+  .minimap-func { background-color: rgb(var(--ide-cyan) / 0.9); }
+  .minimap-str { background-color: rgb(var(--ide-amber) / 0.9); }
+  .minimap-plain { background-color: rgb(var(--ide-text-muted) / 0.8); }
+
+  /* Legacy utility names remain safe for secondary views while adopting flat surfaces. */
+  .bg-code {
+    background-color: rgb(var(--ide-code) / 1);
+  }
+
+  .glass-panel {
+    background: rgb(var(--ide-panel) / 1);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
-.animate-glow {
-  animation: glow-pulse 3s infinite ease-in-out;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
-
-/* Subtle code background */
-.bg-code {
-  background-color: #0b0f19;
-}
-
-/* Glass panel */
-.glass-panel {
-  background: rgba(16, 21, 32, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-

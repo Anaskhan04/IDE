@@ -1,140 +1,88 @@
 import React from 'react';
+import { ChevronDown, Code2, Command, Search, Settings, Sparkles } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 
 export const TopNav: React.FC = () => {
-  const { 
+  const {
     activeModel,
     masterPrompt,
+    isCopilotOpen,
+    setIsCopilotOpen,
+    setIsModelSwitchingModalOpen,
   } = useIDE();
 
   return (
-    <header className="h-10 bg-[#0a0e1a] border-b border-[#182133] flex items-center justify-between px-3 z-30 shrink-0 select-none" data-purpose="top-navigation">
-      {/* Left: Logo & Brand */}
-      <div className="flex items-center gap-2.5 min-w-[200px]">
-        <div className="w-6 h-6 rounded-md bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-[0_0_12px_rgba(59,130,246,0.6)] text-white font-bold text-xs">
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" viewBox="0 0 24 24">
-            <polyline points="16 18 22 12 16 6"></polyline>
-            <polyline points="8 6 2 12 8 18"></polyline>
-          </svg>
+    <header
+      className="flex h-12 shrink-0 items-center gap-4 border-b border-ide-border bg-ide-shell px-3"
+      data-purpose="top-navigation"
+    >
+      <div className="flex w-[175px] shrink-0 items-center gap-2.5 lg:w-[230px]">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center border border-ide-focus/70 bg-ide-selected text-ide-focus" aria-hidden="true">
+          <Code2 className="h-4 w-4" strokeWidth={1.8} />
         </div>
-        <span className="font-semibold tracking-wide text-white text-[13.5px] flex items-center gap-1.5">
-          IntelliCode
-          <span className="text-[11px] font-mono px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-            v0.24
+        <div className="min-w-0">
+          <div className="flex items-baseline gap-2 leading-none">
+            <span className="font-semibold tracking-[0.01em] text-ide-strong">IntelliCode</span>
+            <span className="font-mono text-[10px] text-ide-subtle">v0.24</span>
+          </div>
+          <span className="mt-1 block truncate font-mono text-[10px] text-ide-muted">
+            {masterPrompt.projectName || 'workspace'}
           </span>
-        </span>
+        </div>
       </div>
 
-      {/* Center: Global Quick Command Search & Actions */}
-      <div className="flex items-center gap-2 max-w-[700px] w-full justify-center">
-        {/* Search Bar */}
-        <div className="relative w-full max-w-sm">
-          <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-500">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-            </svg>
-          </div>
+      <div className="min-w-0 flex-1">
+        <label className="sr-only" htmlFor="global-command-search">Search files, symbols, commands</label>
+        <div className="group mx-auto flex max-w-[680px] items-center gap-2 border-b border-ide-border-strong/70 px-1.5 text-ide-muted transition-colors focus-within:border-ide-focus">
+          <Search className="h-3.5 w-3.5 shrink-0 text-ide-subtle" aria-hidden="true" />
           <input
-            className="w-full bg-[#111726] text-xs text-slate-300 placeholder-slate-500 pl-8 pr-12 py-1 rounded-md border border-[#1e2a42] focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/40 transition-all shadow-inner font-sans"
-            placeholder="Search files, symbols, commands..."
-            type="text"
+            id="global-command-search"
+            className="min-w-0 flex-1 bg-transparent py-1.5 text-xs text-ide-text outline-none placeholder:text-ide-subtle"
+            placeholder="Search files, symbols, commands…"
+            type="search"
           />
-          <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none">
-            <kbd className="px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-[#1a2336] border border-[#273552] rounded">
-              Ctrl K
-            </kbd>
-          </div>
-        </div>
-
-        {/* Top Tools / Dropdowns - Clickable, but nothing comes */}
-        <div className="flex items-center gap-1 text-[12px] text-slate-400">
-          <button 
-            onClick={() => {}}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-[#151c2d] hover:text-slate-200 transition-colors cursor-pointer select-none active:scale-[0.98]"
-            title="Impact Analysis"
-          >
-            <svg className="w-3.5 h-3.5 text-amber-400/80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-            </svg>
-            <span>Impact Analysis</span>
-            <svg className="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path d="M19 9l-7 7-7-7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-            </svg>
-          </button>
-
-          <button 
-            onClick={() => {}}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-[#151c2d] hover:text-slate-200 transition-colors cursor-pointer select-none active:scale-[0.98]"
-            title="MCP Hub"
-          >
-            <svg className="w-3.5 h-3.5 text-blue-400/80" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-              <polyline points="2 17 12 22 22 17"></polyline>
-              <polyline points="2 12 12 17 22 12"></polyline>
-            </svg>
-            <span>MCP Hub</span>
-            <svg className="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path d="M19 9l-7 7-7-7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-            </svg>
-          </button>
-
-          <button 
-            onClick={() => {}}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-[#151c2d] hover:text-slate-200 transition-colors cursor-pointer select-none active:scale-[0.98]"
-            title="Tools"
-          >
-            <span>Tools</span>
-            <svg className="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path d="M19 9l-7 7-7-7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-            </svg>
-          </button>
+          <kbd className="flex items-center gap-1 border border-ide-border-strong px-1.5 py-0.5 font-mono text-[10px] text-ide-muted">
+            <Command className="h-2.5 w-2.5" aria-hidden="true" />K
+          </kbd>
         </div>
       </div>
 
-      {/* Right: Model Selector, Sync Status, Settings & Avatar */}
-      <div className="flex items-center gap-3">
-        {/* AST Sync Status - Clickable, but nothing comes */}
+      <div className="flex shrink-0 items-center gap-2 border-l border-ide-border pl-3 text-[11px]">
+        <div className="hidden items-center gap-1.5 pr-2 text-ide-emerald xl:flex" title={`AST ${masterPrompt.astVersion || 'synced'}`}>
+          <span className="h-1.5 w-1.5 bg-ide-emerald" aria-hidden="true" />
+          <span>AST synced</span>
+        </div>
+
         <button
-          onClick={() => {}}
-          className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#10192a] border border-[#1e2a42] text-[11px] text-emerald-400 font-medium cursor-pointer select-none active:scale-[0.98]"
-          title="AST Synced"
+          type="button"
+          onClick={() => setIsModelSwitchingModalOpen(true)}
+          className="ide-focus-ring ide-control flex min-h-[30px] items-center gap-1.5 border-l border-ide-border px-2 text-ide-text hover:bg-ide-hover hover:text-ide-strong"
+          title="Choose coding model"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span>AST Synced</span>
+          <span className="font-mono text-[10px] text-ide-cyan">MODEL</span>
+          <span className="max-w-[130px] truncate font-medium">{activeModel.name}</span>
+          <ChevronDown className="h-3 w-3 text-ide-subtle" aria-hidden="true" />
         </button>
 
-        {/* LLM Model Picker - Clickable, but nothing comes */}
         <button
-          onClick={() => {}}
-          className="flex items-center gap-1.5 px-2.5 py-1 bg-[#101726] hover:bg-[#162035] border border-[#212d46] rounded-md text-xs text-slate-200 transition-colors cursor-pointer select-none active:scale-[0.98]"
-          title="AI Model"
+          type="button"
+          onClick={() => setIsCopilotOpen(!isCopilotOpen)}
+          className={`ide-focus-ring ide-control flex min-h-[30px] items-center gap-1.5 border-l border-ide-border px-2 ${
+            isCopilotOpen ? 'text-ide-cyan' : 'text-ide-muted hover:bg-ide-hover hover:text-ide-text'
+          }`}
+          aria-pressed={isCopilotOpen}
+          title={isCopilotOpen ? 'Close context inspector' : 'Open context inspector'}
         >
-          <svg className="w-3.5 h-3.5 text-purple-400" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"></path>
-          </svg>
-          <span className="font-medium">{activeModel.name || 'Claude 3.5 Sonnet'}</span>
-          <svg className="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path d="M19 9l-7 7-7-7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-          </svg>
+          <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+          <span className="hidden lg:inline">Context</span>
         </button>
 
-        {/* Settings Icon */}
-        <button 
-          onClick={() => {}}
-          className="text-slate-400 hover:text-slate-200 p-1 cursor-pointer transition-colors"
-          title="Settings"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-            <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-          </svg>
-        </button>
+        <span className="border-l border-ide-border pl-2 text-ide-subtle" title="Settings are not available in this build">
+          <Settings className="h-3.5 w-3.5" aria-hidden="true" />
+          <span className="sr-only">Settings unavailable</span>
+        </span>
 
-        {/* User Profile Badge */}
-        <div 
-          className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-500 to-slate-800 border border-indigo-300/30 flex items-center justify-center text-[10px] font-bold text-white shadow-sm cursor-pointer select-none"
-          title="User Profile (NK)"
-        >
+        <div className="flex h-7 w-7 items-center justify-center border border-ide-border bg-ide-panel font-mono text-[10px] font-semibold text-ide-text" title="Profile: NK">
           NK
         </div>
       </div>

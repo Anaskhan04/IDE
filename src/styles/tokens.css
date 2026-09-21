@@ -1,0 +1,45 @@
+/* 
+  Centralized Design Tokens
+  These variables define the color palette, sizing, and structure for the IDE.
+  All UI components MUST use these semantic tokens rather than hardcoded values.
+*/
+
+:root {
+  /* Layout & Surfaces (RGB values for tailwind opacity support) */
+  --ide-shell: 8 11 16;
+  --ide-bg: 12 16 23;
+  --ide-sidebar: 11 15 22;
+  --ide-panel: 16 21 32;
+  --ide-surface: 17 24 36;
+  --ide-card: 22 28 43;
+  
+  /* Interactive States */
+  --ide-selected: 23 34 53;
+  --ide-hover: 26 36 51;
+  
+  /* Borders */
+  --ide-border: 32 42 58;
+  --ide-border-strong: 43 56 78;
+  
+  /* Typography */
+  --ide-text-strong: 245 247 250;
+  --ide-text: 199 208 220;
+  --ide-text-muted: 154 167 183;
+  --ide-text-subtle: 113 128 150;
+  
+  /* Accents & States */
+  --ide-focus: 59 130 246;
+  --ide-cyan: 6 182 212;
+  --ide-emerald: 16 185 129;
+  --ide-amber: 245 158 11;
+  --ide-rose: 244 63 94;
+  --ide-purple: 139 92 246;
+  
+  /* Editor specific */
+  --ide-code: 8 12 20;
+  
+  /* Radius */
+  --ide-control-radius: 4px;
+  --ide-panel-radius: 6px;
+
+}

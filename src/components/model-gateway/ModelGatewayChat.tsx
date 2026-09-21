@@ -1,188 +1,204 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ArrowRightLeft, ChevronRight, Cpu, FileCode, Play, Send, X } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
-import { 
-  Send, 
-  Sparkles, 
-  Cpu, 
-  ArrowRightLeft, 
-  Play, 
-  X
-} from 'lucide-react';
+
+type ContextTab = 'notes' | 'impact';
+
+const formatTokens = (tokens?: number) => (tokens ? `${(tokens / 1000).toFixed(1)}k` : '0');
 
 export const ModelGatewayChat: React.FC = () => {
-  const { 
-    chatMessages, 
-    sendChatMessage, 
-    activeModel, 
+  const {
+    chatMessages,
+    sendChatMessage,
+    activeModel,
     setIsModelSwitchingModalOpen,
     setActiveView,
     runTests,
     isExecutingTests,
-    setIsCopilotOpen
+    setIsCopilotOpen,
+    files,
+    activeFileId,
+    ciaResult,
   } = useIDE();
 
   const [inputMessage, setInputMessage] = useState('');
+  const [activeTab, setActiveTab] = useState<ContextTab>('notes');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const panel = messagesPanelRef.current;
+    if (!panel) return;
+    const distanceFromBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight;
+    if (distanceFromBottom < 120) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
-  const handleSend = (e: React.FormEvent) => {
-    e.preventDefault();
+  const activeFile = files.find((file) => file.id === activeFileId);
+
+  const handleSend = (event: React.FormEvent) => {
+    event.preventDefault();
     if (!inputMessage.trim()) return;
-    const msg = inputMessage;
+    const message = inputMessage;
     setInputMessage('');
-    sendChatMessage(msg);
+    sendChatMessage(message);
   };
 
-  // Sample quick prompt actions (commented out for clean minimalist view):
-  // const samplePrompts = [
-  //   "Refactor paymentService to support Apple Pay",
-  //   "Analyze change impact on cartStore",
-  //   "Generate unit tests for modified symbols"
-  // ];
-
   return (
-    <div className="w-80 lg:w-96 bg-ide-sidebar border-l border-ide-border flex flex-col h-[calc(100vh-3.5rem-1.75rem)] select-none">
-      {/* Copilot Header */}
-      <div className="p-3 border-b border-ide-border bg-ide-panel/80 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-md bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white">
-            <Sparkles className="w-3.5 h-3.5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-semibold text-white">AI Copilot</span>
-              <span className="text-[9px] font-mono px-1.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                {activeModel.name}
-              </span>
+    <aside className="flex h-full w-[332px] max-w-[42vw] shrink-0 flex-col border-l border-ide-border bg-ide-sidebar max-[1100px]:absolute max-[1100px]:inset-y-0 max-[1100px]:right-0 max-[1100px]:z-40 max-[1100px]:w-[min(332px,80vw)]" data-purpose="context-inspector">
+      <div className="shrink-0 border-b border-ide-border bg-ide-panel">
+        <div className="flex h-12 items-center justify-between px-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-semibold text-ide-strong">
+              <span className="h-1.5 w-1.5 bg-ide-cyan" aria-hidden="true" />
+              Context inspector
             </div>
-            <p className="text-[10px] text-slate-400 font-mono">
-              Zero-Loss AST Gateway
-            </p>
+            <div className="mt-1 truncate font-mono text-[10px] text-ide-subtle">{activeFile?.path || 'No active file'}</div>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setIsModelSwitchingModalOpen(true)}
+              className="ide-focus-ring flex h-7 items-center gap-1 border border-ide-border-strong px-2 font-mono text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+              title="Switch coding model"
+            >
+              <ArrowRightLeft className="h-3 w-3 text-ide-cyan" aria-hidden="true" />
+              Model
+            </button>
+            <button type="button" onClick={() => setIsCopilotOpen(false)} className="ide-focus-ring flex h-7 w-7 items-center justify-center text-ide-muted hover:bg-ide-hover hover:text-ide-text" title="Close context inspector" aria-label="Close context inspector">
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
-          {/* Switch model button - Kept visible, but unclickable */}
-          <button
-            disabled
-            className="p-1.5 rounded-lg bg-ide-card/50 border border-ide-border/50 text-slate-500 cursor-not-allowed opacity-75"
-            title="Switch Model (Unclickable)"
-          >
-            <ArrowRightLeft className="w-3.5 h-3.5 text-slate-500" />
-          </button>
-
-          {/* Close Panel Button */}
-          <button
-            onClick={() => setIsCopilotOpen(false)}
-            className="p-1.5 rounded-lg bg-ide-card hover:bg-ide-hover border border-ide-border text-slate-400 hover:text-white transition-colors"
-            title="Close Copilot Panel"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+        <div className="flex h-8 border-t border-ide-border px-3" role="tablist" aria-label="Context inspector sections">
+          {(['notes', 'impact'] as ContextTab[]).map((tab) => {
+            const isSelected = activeTab === tab;
+            return (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={isSelected}
+                onClick={() => setActiveTab(tab)}
+                className={`ide-focus-ring border-b-2 px-2 text-[10px] font-semibold uppercase tracking-[0.08em] ${isSelected ? 'border-ide-cyan text-ide-text' : 'border-transparent text-ide-subtle hover:text-ide-muted'}`}
+              >
+                {tab}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Main Body */}
-      <div className="flex-1 flex flex-col min-h-0">
-          {/* Chat Messages */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-3 font-sans">
-            {chatMessages.map((msg) => {
-              const isUser = msg.sender === 'user';
-              return (
-                <div
-                  key={msg.id}
-                  className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
-                >
-                  {/* Sender & Model Tag */}
-                  <div className="flex items-center gap-1.5 mb-1 px-1 text-[10px] text-slate-400 font-mono">
-                    {!isUser && <Cpu className="w-3 h-3 text-cyan-400" />}
-                    <span>{isUser ? 'You' : msg.model || activeModel.name}</span>
-                    <span className="text-slate-600">•</span>
-                    <span>{msg.timestamp}</span>
-                  </div>
-
-                  {/* Bubble */}
-                  <div
-                    className={`max-w-[90%] rounded-xl p-3 text-xs leading-relaxed ${
-                      isUser
-                        ? 'bg-blue-600 text-white rounded-br-xs shadow-md'
-                        : 'bg-ide-card border border-ide-border text-slate-200 rounded-bl-xs'
-                    }`}
-                  >
-                    <div className="whitespace-pre-wrap font-sans">
-                      {msg.content}
+      {activeTab === 'notes' ? (
+        <>
+          <div ref={messagesPanelRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+            <div className="mb-3 border-b border-ide-border pb-3 font-mono text-[10px] text-ide-subtle">
+              Shared context · {activeModel.name}
+            </div>
+            <div className="space-y-4">
+              {chatMessages.map((message) => {
+                const isUser = message.sender === 'user';
+                return (
+                  <article key={message.id} className={`border-l-2 pl-3 ${isUser ? 'border-ide-focus' : 'border-ide-cyan'}`}>
+                    <div className="mb-1 flex items-center gap-2 font-mono text-[10px] text-ide-subtle">
+                      <span className={isUser ? 'text-ide-focus' : 'text-ide-cyan'}>{isUser ? 'You' : message.model || activeModel.name}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{message.timestamp}</span>
                     </div>
+                    <div className="whitespace-pre-wrap text-xs leading-relaxed text-ide-text">{message.content}</div>
 
-                    {/* Telemetry info for model response */}
-                    {!isUser && (msg.tokensSaved || msg.tokensUsed) && (
-                      <div className="mt-2.5 pt-2 border-t border-ide-border/60 flex items-center justify-between text-[10px] font-mono text-slate-400">
-                        <span className="text-emerald-400">
-                          ⚡ Tokens Saved: {msg.tokensSaved ? (msg.tokensSaved / 1000).toFixed(1) + 'k' : '18.2k'}
-                        </span>
-                        <span className="text-slate-500">
-                          {msg.contextContinuity ? 'Context Handover: 100%' : ''}
-                        </span>
+                    {!isUser && (message.tokensSaved || message.tokensUsed || message.contextContinuity) && (
+                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-ide-border pt-2 font-mono text-[10px] text-ide-subtle">
+                        <span>Used {formatTokens(message.tokensUsed)} tokens</span>
+                        <span className="text-ide-emerald">Saved {formatTokens(message.tokensSaved)}</span>
+                        {message.contextContinuity && <span>Handover 100%</span>}
                       </div>
                     )}
 
-                    {/* Action recommendations */}
-                    {msg.suggestedAction && (
-                      <div className="mt-3 pt-2 border-t border-ide-border flex flex-col gap-1.5">
-                        <button
-                          onClick={() => {
-                            if (msg.suggestedAction?.type === 'run_tests') {
-                              runTests();
-                            }
-                          }}
-                          disabled={isExecutingTests || msg.suggestedAction?.type !== 'run_tests'}
-                          className={`w-full py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${
-                            msg.suggestedAction?.type === 'run_tests'
-                              ? 'bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300'
-                              : 'bg-ide-card/50 border border-ide-border/60 text-slate-500 cursor-not-allowed opacity-75'
-                          }`}
-                        >
-                          <Play className="w-3.5 h-3.5" />
-                          <span>
-                            {isExecutingTests ? 'Executing Affected Tests...' : msg.suggestedAction.label}
-                          </span>
-                        </button>
-                      </div>
+                    {message.suggestedAction?.type === 'run_tests' && (
+                      <button
+                        type="button"
+                        onClick={() => runTests()}
+                        disabled={isExecutingTests}
+                        className="ide-focus-ring mt-3 inline-flex items-center gap-2 border border-ide-emerald/60 px-2.5 py-1.5 text-[10px] font-semibold text-ide-emerald hover:bg-ide-emerald/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Play className="h-3 w-3" aria-hidden="true" />
+                        {isExecutingTests ? 'Running tests' : message.suggestedAction.label}
+                      </button>
                     )}
-                  </div>
-                </div>
-              );
-            })}
-            <div ref={messagesEndRef} />
+                  </article>
+                );
+              })}
+              <div ref={messagesEndRef} />
+            </div>
           </div>
 
-          {/* Chat Input */}
-          <form onSubmit={handleSend} className="p-2.5 border-t border-ide-border bg-ide-panel">
-            <div className="relative">
+          <form onSubmit={handleSend} className="shrink-0 border-t border-ide-border bg-ide-panel p-3">
+            <label htmlFor="context-composer" className="mb-1.5 block font-mono text-[10px] text-ide-muted">Shared context</label>
+            <div className="flex items-center gap-2 border border-ide-border-strong bg-ide-surface px-2 focus-within:border-ide-focus">
               <input
+                id="context-composer"
                 type="text"
-                placeholder={`Ask ${activeModel.name} with shared context...`}
                 value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                className="w-full bg-ide-card text-xs text-slate-100 pl-3 pr-10 py-2.5 rounded-lg border border-ide-border focus:outline-none focus:border-cyan-500/80 font-sans"
+                onChange={(event) => setInputMessage(event.target.value)}
+                placeholder={`Ask ${activeModel.name}…`}
+                className="min-w-0 flex-1 bg-transparent py-2 text-xs text-ide-text outline-none placeholder:text-ide-subtle"
               />
-              <button
-                type="submit"
-                disabled={!inputMessage.trim()}
-                className="absolute right-1.5 top-1.5 p-1.5 rounded-md bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:hover:bg-cyan-600 text-white transition-colors"
-              >
-                <Send className="w-3.5 h-3.5" />
+              <button type="submit" disabled={!inputMessage.trim()} className="ide-focus-ring flex h-7 w-7 items-center justify-center bg-ide-focus text-white disabled:cursor-not-allowed disabled:opacity-40" aria-label="Send message">
+                <Send className="h-3.5 w-3.5" />
               </button>
             </div>
           </form>
-        </div>
+        </>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          <div className="mb-4 border-b border-ide-border pb-3">
+            <div className="flex items-center gap-2 font-mono text-[10px] text-ide-amber">
+              <FileCode className="h-3.5 w-3.5" aria-hidden="true" />
+              Impact context
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-ide-muted">A compact view of the active file’s downstream relationships.</p>
+          </div>
 
-      {/* 
-        // PERSISTENT CONTEXT INSPECTOR TAB COMMENTED OUT (Uncomment anytime to restore Shared Memory tab):
-        // <div className="flex-1 overflow-y-auto p-3 space-y-3 font-sans text-xs">...</div>
-      */}
-    </div>
+          {activeFile?.isModified ? (
+            <div className="space-y-4">
+              <div className="border-l-2 border-ide-amber pl-3">
+                <div className="font-mono text-[10px] text-ide-subtle">Target</div>
+                <div className="mt-1 text-xs font-semibold text-ide-text">{activeFile.name}</div>
+                <div className="mt-1 font-mono text-[10px] text-ide-muted">{activeFile.path}</div>
+              </div>
+              <div className="grid grid-cols-3 border-y border-ide-border py-3 text-center font-mono">
+                <div><div className="text-base text-ide-amber">{ciaResult.blastRadiusScore}</div><div className="text-[9px] text-ide-subtle">score</div></div>
+                <div><div className="text-base text-ide-amber">{ciaResult.directAffected.length}</div><div className="text-[9px] text-ide-subtle">direct</div></div>
+                <div><div className="text-base text-ide-cyan">{ciaResult.indirectAffected.length}</div><div className="text-[9px] text-ide-subtle">ripple</div></div>
+              </div>
+              <div className="space-y-2">
+                {ciaResult.directAffected.slice(0, 3).map((item) => (
+                  <div key={item.id} className="border-b border-ide-border pb-2">
+                    <div className="text-xs text-ide-text">{item.name}</div>
+                    <div className="mt-1 font-mono text-[10px] text-ide-subtle">Direct · {item.type}</div>
+                  </div>
+                ))}
+              </div>
+              <button type="button" onClick={() => setActiveView('cia')} className="ide-focus-ring inline-flex items-center gap-1 text-[10px] font-semibold text-ide-focus hover:text-ide-text">
+                Open full impact analysis <ChevronRight className="h-3 w-3" />
+              </button>
+            </div>
+          ) : (
+            <div className="border-l-2 border-ide-border-strong py-1 pl-3">
+              <div className="font-mono text-[10px] text-ide-subtle">Impact unavailable</div>
+              <p className="mt-2 text-xs leading-relaxed text-ide-muted">No modified file has been analyzed yet.</p>
+              <button type="button" onClick={() => setActiveView('cia')} className="ide-focus-ring mt-4 inline-flex items-center gap-1 border border-ide-border-strong px-2.5 py-1.5 text-[10px] text-ide-text hover:bg-ide-hover">
+                Open impact analysis <ChevronRight className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
+          <div className="mt-6 border-t border-ide-border pt-3 font-mono text-[10px] text-ide-subtle">
+            <div className="flex items-center gap-2"><Cpu className="h-3 w-3 text-ide-cyan" /> Source: AST context</div>
+          </div>
+        </div>
+      )}
+    </aside>
   );
 };

@@ -1,103 +1,63 @@
 import React from 'react';
+import { GitBranch, RefreshCw } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 
 export const StatusBar: React.FC = () => {
   const { masterPrompt, mcpServers, files, activeFileId } = useIDE();
+  const activeFile = files.find((file) => file.id === activeFileId);
 
-  const activeFile = files.find(f => f.id === activeFileId);
   const languageLabel = activeFile
-    ? (activeFile.name.endsWith('.c') || activeFile.name.endsWith('.h')
-        ? 'C'
-        : activeFile.name.endsWith('.ts') || activeFile.name.endsWith('.tsx')
+    ? activeFile.name.endsWith('.c') || activeFile.name.endsWith('.h')
+      ? 'C'
+      : activeFile.name.endsWith('.ts') || activeFile.name.endsWith('.tsx')
         ? 'TypeScript'
-        : activeFile.language.toUpperCase())
+        : activeFile.language.toUpperCase()
     : 'Plain Text';
 
-  const shortLang = activeFile
-    ? (activeFile.name.endsWith('.c') || activeFile.name.endsWith('.h') ? 'C' : 'TS')
+  const shortLanguage = activeFile
+    ? activeFile.name.endsWith('.c') || activeFile.name.endsWith('.h')
+      ? 'C'
+      : activeFile.name.endsWith('.ts') || activeFile.name.endsWith('.tsx')
+        ? 'TS'
+        : activeFile.language.toUpperCase()
     : '--';
 
-  const connectedMcpCount = mcpServers.filter(s => s.status === 'connected').length || 5;
-  const totalMcpCount = mcpServers.length || 5;
+  const connectedMcpCount = mcpServers.filter((server) => server.status === 'connected').length;
+  const totalMcpCount = mcpServers.length;
+  const cacheLabel = masterPrompt.cacheHitRatio || 'Unknown';
 
   return (
-    <footer className="h-6 bg-[#070a12] border-t border-[#161d2c] flex items-center justify-between px-2 text-[11px] text-slate-400 shrink-0 z-30 select-none" data-purpose="ide-status-bar">
-      {/* Left Status Indicators */}
-      <div className="flex items-center gap-3">
-        {/* Git Branch */}
-        <button className="flex items-center gap-1.5 hover:text-slate-200 transition-colors">
-          <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <line x1="6" x2="6" y1="3" y2="15"></line>
-            <circle cx="18" cy="6" r="3"></circle>
-            <circle cx="6" cy="18" r="3"></circle>
-            <path d="M18 9a9 9 0 0 1-9 9"></path>
-          </svg>
-          <span className="font-mono">main</span>
-        </button>
-
-        {/* Sync / Refresh */}
-        <button className="hover:text-slate-200" title="Synchronize Changes">
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-          </svg>
-        </button>
-
-        {/* Errors & Warnings */}
-        <div className="flex items-center gap-2 font-mono">
-          <span className="flex items-center gap-1 hover:text-slate-200 cursor-pointer">
-            <svg className="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="9"></circle>
-              <path d="M12 8v4m0 4h.01"></path>
-            </svg>
-            0
-          </span>
-          <span className="flex items-center gap-1 hover:text-slate-200 cursor-pointer">
-            <svg className="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-            </svg>
-            0
-          </span>
-        </div>
-
-        {/* CIA Guard Active Status */}
-        <div className="flex items-center gap-1.5 text-amber-400 font-medium pl-1">
-          <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-          <span>CIA Guard Active</span>
-        </div>
+    <footer
+      className="flex h-7 shrink-0 items-center justify-between gap-4 border-t border-ide-border bg-ide-shell px-3 font-mono text-[10px] text-ide-muted"
+      data-purpose="ide-status-bar"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex items-center gap-1.5 whitespace-nowrap text-ide-text" title="Current git branch">
+          <GitBranch className="h-3 w-3 text-ide-subtle" aria-hidden="true" />
+          main
+        </span>
+        <span className="text-ide-border-strong" aria-hidden="true">|</span>
+        <span className="flex items-center gap-1.5 whitespace-nowrap text-ide-subtle" title="Synchronize changes">
+          <RefreshCw className="h-3 w-3" aria-hidden="true" />
+          Sync
+        </span>
+        <span className="hidden items-center gap-2 whitespace-nowrap sm:flex" aria-label="Diagnostics: zero errors and zero warnings">
+          <span>Errors 0</span>
+          <span>Warnings 0</span>
+        </span>
+        <span className="hidden items-center gap-1.5 whitespace-nowrap text-ide-amber md:flex">
+          <span className="h-1.5 w-1.5 bg-ide-amber" aria-hidden="true" />
+          CIA Guard Active
+        </span>
       </div>
 
-      {/* Right Status Indicators */}
-      <div className="flex items-center gap-4 text-[11px]">
-        {/* MCP Connection Status */}
-        <div className="flex items-center gap-1.5 text-slate-300">
-          <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-            <polyline points="2 17 12 22 22 17"></polyline>
-            <polyline points="2 12 12 17 22 12"></polyline>
-          </svg>
-          <span>MCP: {connectedMcpCount}/{totalMcpCount} Connected</span>
-        </div>
-
-        {/* Cache Ratio */}
-        <div className="flex items-center gap-1 text-cyan-400 font-medium">
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path d="M13 10V3L4 14h7v7l9-11h-7z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"></path>
-          </svg>
-          <span>Cache: {masterPrompt.cacheHitRatio || '96.8%'}</span>
-        </div>
-
-        {/* Language Mode */}
-        <div className="text-blue-400 font-bold font-mono">{shortLang}</div>
-
-        {/* Encoding & EOL */}
-        <div className="hover:text-slate-200 cursor-pointer">UTF-8</div>
-        <div className="hover:text-slate-200 cursor-pointer">LF</div>
-
-        {/* Curly Bracket Syntax */}
-        <div className="flex items-center gap-1 hover:text-slate-200 cursor-pointer">
-          <span className="font-mono text-slate-400">{'{ }'}</span>
-          <span>{languageLabel}</span>
-        </div>
+      <div className="flex shrink-0 items-center gap-3 whitespace-nowrap">
+        <span>MCP: {connectedMcpCount}/{totalMcpCount} Connected</span>
+        <span className="hidden text-ide-cyan sm:inline">Cache: {cacheLabel}</span>
+        <span className="text-ide-focus">{shortLanguage}</span>
+        <span className="hidden md:inline">UTF-8</span>
+        <span className="hidden md:inline">LF</span>
+        <span className="text-ide-text">{'{ }'} {languageLabel}</span>
       </div>
     </footer>
   );

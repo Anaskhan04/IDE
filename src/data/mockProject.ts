@@ -159,7 +159,7 @@ export const CheckoutPage: React.FC = () => {
     <div className="p-6 bg-slate-900 rounded-xl">
       <h2 className="text-xl font-bold">Checkout Summary</h2>
       <p>Cart Total: \${totalAmount}</p>
-      <button onClick={handleCheckout} disabled={loading} className="mt-4 px-4 py-2 bg-blue-600 rounded">
+      <button onClick={handleCheckout} disabled={loading} className="mt-4 px-4 py-2 bg-ide-focus rounded">
         {loading ? 'Processing...' : 'Pay Now'}
       </button>
     </div>

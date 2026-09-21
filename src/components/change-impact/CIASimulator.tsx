@@ -1,331 +1,181 @@
 import React, { useState } from 'react';
+import { ArrowRight, ChevronRight, FileCheck, FileCode, Layers, Play, ShieldAlert } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
-import { 
-  ShieldAlert, 
-  Flame, 
-  CheckCircle2, 
-  Play, 
-  ArrowRight, 
-  Layers, 
-  FileCode, 
-  FileCheck, 
-  GitFork, 
-  Activity, 
-  Zap, 
-  ChevronRight,
-  AlertTriangle
-} from 'lucide-react';
+
+const severityTone: Record<string, { label: string; text: string; marker: string }> = {
+  critical: { label: 'Critical', text: 'text-ide-rose', marker: 'bg-ide-rose' },
+  high: { label: 'High', text: 'text-ide-rose', marker: 'bg-ide-rose' },
+  moderate: { label: 'Moderate', text: 'text-ide-amber', marker: 'bg-ide-amber' },
+  low: { label: 'Low', text: 'text-ide-focus', marker: 'bg-ide-focus' },
+};
 
 export const CIASimulator: React.FC = () => {
-  const { 
-    ciaResult, 
-    runChangeImpactAnalysis, 
-    openFile, 
-    setActiveView, 
-    runTests, 
-    isExecutingTests 
+  const {
+    ciaResult,
+    runChangeImpactAnalysis,
+    openFile,
+    setActiveView,
+    runTests,
+    isExecutingTests,
+    files,
   } = useIDE();
 
   const [selectedScenario, setSelectedScenario] = useState<'payment' | 'auth'>('payment');
+  const [hasRunAnalysis, setHasRunAnalysis] = useState(false);
+  const hasModifiedTarget = files.some((file) => file.isModified && file.id === ciaResult.targetId);
+  const hasAnalysis = hasRunAnalysis || hasModifiedTarget;
+  const tone = severityTone[ciaResult.severity] || severityTone.low;
 
   const handleSwitchScenario = (scenario: 'payment' | 'auth') => {
     setSelectedScenario(scenario);
-    if (scenario === 'payment') {
-      runChangeImpactAnalysis('payment-service');
-    } else {
-      runChangeImpactAnalysis('auth-service');
-    }
-  };
-
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'critical': return 'text-rose-500 bg-rose-500/10 border-rose-500/30';
-      case 'high': return 'text-rose-400 bg-rose-500/10 border-rose-500/30';
-      case 'moderate': return 'text-amber-400 bg-amber-500/10 border-amber-500/30';
-      default: return 'text-blue-400 bg-blue-500/10 border-blue-500/30';
-    }
+    setHasRunAnalysis(true);
+    runChangeImpactAnalysis(scenario === 'payment' ? 'payment-service' : 'auth-service');
   };
 
   return (
-    <div className="flex-1 bg-ide-bg h-[calc(100vh-3.5rem-1.75rem)] overflow-y-auto p-6 select-none font-sans">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Page Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-ide-border">
+    <section id="cia-workspace" className="flex h-full min-h-0 flex-col overflow-y-auto bg-ide-bg" data-purpose="change-impact-workspace">
+      <div className="mx-auto w-full max-w-[1180px] px-5 py-6 lg:px-8">
+        <header className="flex flex-col gap-4 border-b border-ide-border pb-5 2xl:flex-row 2xl:items-end 2xl:justify-between">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
-                <Flame className="w-5 h-5" />
-              </div>
-              <h1 className="text-xl font-bold text-white">Change Impact Analysis (CIA) Studio</h1>
-              <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                Autonomous AST Tracer
-              </span>
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4 text-ide-amber" aria-hidden="true" />
+              <h1 className="text-base font-semibold text-ide-strong">Change impact analysis</h1>
             </div>
-            <p className="text-xs text-slate-400 max-w-2xl">
-              IntelliCode continuously evaluates the Project Knowledge Graph to calculate the blast radius of any code change, preventing broken downstream dependencies and proactively targeting test suites.
-            </p>
+            <p className="mt-2 max-w-2xl text-xs leading-relaxed text-ide-muted">Review what this change reaches before running the affected tests.</p>
           </div>
-
-          {/* Scenario Quick Switcher */}
-          <div className="flex items-center gap-2 bg-ide-panel p-1.5 rounded-xl border border-ide-border">
-            <span className="text-xs text-slate-400 font-mono px-2">Simulate Change:</span>
-            <button
-              onClick={() => handleSwitchScenario('payment')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-all ${
-                selectedScenario === 'payment'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              paymentService.ts
-            </button>
-            <button
-              onClick={() => handleSwitchScenario('auth')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-all ${
-                selectedScenario === 'auth'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-semibold shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              authService.ts
-            </button>
-          </div>
-        </div>
-
-        {/* Top Metric Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* Blast Radius Gauge */}
-          <div className="p-4 rounded-xl bg-ide-panel border border-ide-border flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-mono text-slate-400">Blast Radius Score</span>
-              <span className={`text-xs font-mono px-2 py-0.5 rounded uppercase font-semibold border ${getSeverityColor(ciaResult.severity)}`}>
-                {ciaResult.severity}
-              </span>
-            </div>
-            <div className="my-3 flex items-baseline gap-2">
-              <span className="text-3xl font-bold font-mono text-white">{ciaResult.blastRadiusScore}</span>
-              <span className="text-slate-500 font-mono text-sm">/ 100</span>
-            </div>
-            <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
-              <div 
-                className={`h-full transition-all duration-500 ${
-                  ciaResult.blastRadiusScore > 70 ? 'bg-rose-500' : 'bg-amber-500'
-                }`}
-                style={{ width: `${ciaResult.blastRadiusScore}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Direct Impact Count */}
-          <div className="p-4 rounded-xl bg-ide-panel border border-ide-border flex flex-col justify-between">
-            <span className="text-xs font-mono text-slate-400">Directly Affected Components</span>
-            <div className="my-2">
-              <span className="text-3xl font-bold font-mono text-amber-400">{ciaResult.directAffected.length}</span>
-              <span className="text-xs text-slate-400 ml-2">Level 1 dependents</span>
-            </div>
-            <p className="text-[11px] text-slate-500">Cart, Checkout, and Order modules</p>
-          </div>
-
-          {/* Indirect Ripple Count */}
-          <div className="p-4 rounded-xl bg-ide-panel border border-ide-border flex flex-col justify-between">
-            <span className="text-xs font-mono text-slate-400">Indirect Downstream Ripple</span>
-            <div className="my-2">
-              <span className="text-3xl font-bold font-mono text-cyan-400">{ciaResult.indirectAffected.length}</span>
-              <span className="text-xs text-slate-400 ml-2">Transitive nodes (depth 2-3)</span>
-            </div>
-            <p className="text-[11px] text-slate-500">E2E tests & Admin portal</p>
-          </div>
-
-          {/* Recommended Tests */}
-          <div className="p-4 rounded-xl bg-ide-panel border border-ide-border flex flex-col justify-between">
-            <span className="text-xs font-mono text-slate-400">Recommended Test Suites</span>
-            <div className="my-2 flex items-center justify-between">
-              <span className="text-3xl font-bold font-mono text-emerald-400">{ciaResult.recommendedTests.length}</span>
+          <div className="flex items-center gap-1 border border-ide-border-strong bg-ide-panel p-1 font-mono text-[10px]">
+            <span className="px-2 text-ide-subtle">Target</span>
+            {(['payment', 'auth'] as const).map((scenario) => (
               <button
-                onClick={() => {
-                  setActiveView('validation');
-                  runTests();
-                }}
-                disabled={isExecutingTests}
-                className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
+                key={scenario}
+                type="button"
+                onClick={() => handleSwitchScenario(scenario)}
+                className={`ide-focus-ring px-2.5 py-1 ${selectedScenario === scenario ? 'bg-ide-selected text-ide-text' : 'text-ide-muted hover:bg-ide-hover hover:text-ide-text'}`}
+                aria-pressed={selectedScenario === scenario}
               >
-                <Play className="w-3 h-3" />
-                <span>{isExecutingTests ? 'Running...' : 'Run Tests'}</span>
+                {scenario === 'payment' ? 'paymentService.ts' : 'authService.ts'}
+              </button>
+            ))}
+          </div>
+        </header>
+
+        {!hasAnalysis ? (
+          <div className="mt-6 border-l-2 border-ide-border-strong bg-ide-panel px-4 py-4">
+            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-ide-subtle">Impact unavailable</div>
+            <p className="mt-2 text-sm text-ide-text">Open a workspace before reviewing affected components.</p>
+            <p className="mt-1 text-xs text-ide-muted">The analysis result will appear here after a file is loaded or modified.</p>
+            <button type="button" onClick={() => setActiveView('editor')} className="ide-focus-ring mt-4 inline-flex items-center gap-1 border border-ide-border-strong px-3 py-1.5 text-xs text-ide-text hover:bg-ide-hover">
+              Return to editor <ArrowRight className="h-3 w-3" />
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="mt-5 grid border border-ide-border bg-ide-panel md:grid-cols-[1.15fr_1fr_1fr_1fr]">
+              <div className="border-b border-ide-border p-4 md:border-b-0 md:border-r">
+                <div className="font-mono text-[10px] text-ide-subtle">Blast radius</div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="font-mono text-3xl font-semibold tabular-nums text-ide-strong">{ciaResult.blastRadiusScore}</span>
+                  <span className="font-mono text-xs text-ide-subtle">/ 100</span>
+                </div>
+                <div className={`mt-2 flex items-center gap-2 font-mono text-[10px] ${tone.text}`}>
+                  <span className={`h-1.5 w-1.5 ${tone.marker}`} aria-hidden="true" />
+                  {tone.label} attention
+                </div>
+              </div>
+              <div className="border-b border-ide-border p-4 md:border-b-0 md:border-r">
+                <div className="font-mono text-[10px] text-ide-subtle">Direct dependents</div>
+                <div className="mt-3 font-mono text-2xl tabular-nums text-ide-amber">{ciaResult.directAffected.length}</div>
+                <div className="mt-1 text-[11px] text-ide-muted">Immediate callers</div>
+              </div>
+              <div className="border-b border-ide-border p-4 md:border-b-0 md:border-r">
+                <div className="font-mono text-[10px] text-ide-subtle">Downstream ripple</div>
+                <div className="mt-3 font-mono text-2xl tabular-nums text-ide-cyan">{ciaResult.indirectAffected.length}</div>
+                <div className="mt-1 text-[11px] text-ide-muted">Transitive nodes</div>
+              </div>
+              <div className="flex flex-col justify-between p-4">
+                <div>
+                  <div className="font-mono text-[10px] text-ide-subtle">Recommended tests</div>
+                  <div className="mt-3 font-mono text-2xl tabular-nums text-ide-emerald">{ciaResult.recommendedTests.length}</div>
+                </div>
+                <button type="button" onClick={() => runTests()} disabled={isExecutingTests} className="ide-focus-ring mt-3 inline-flex items-center justify-center gap-1.5 bg-ide-emerald px-3 py-1.5 text-[11px] font-semibold text-ide-shell hover:bg-ide-emerald/85 disabled:cursor-not-allowed disabled:opacity-50">
+                  <Play className="h-3 w-3" aria-hidden="true" />
+                  {isExecutingTests ? 'Running tests' : 'Run tests'}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-col gap-2 border-y border-ide-border py-3 font-mono text-[10px] md:flex-row md:items-center">
+              <div className="flex items-center gap-2 text-ide-subtle">
+                <FileCode className="h-3.5 w-3.5 text-ide-amber" aria-hidden="true" />
+                <span>Target</span>
+              </div>
+              <span className="text-ide-text">{ciaResult.targetName}</span>
+              <span className="text-ide-subtle">{ciaResult.targetPath}</span>
+              <span className="md:ml-auto">Scenario: <span className="text-ide-text">{selectedScenario === 'payment' ? 'paymentService.ts' : 'authService.ts'}</span></span>
+              <button type="button" onClick={() => { openFile(selectedScenario === 'payment' ? 'payment-service' : 'auth-service'); setActiveView('editor'); }} className="ide-focus-ring inline-flex items-center gap-1 text-ide-focus hover:text-ide-text">
+                View source <ChevronRight className="h-3 w-3" />
               </button>
             </div>
-            <p className="text-[11px] text-slate-500">38x faster than running full test suite</p>
-          </div>
-        </div>
 
-        {/* Change Target Details */}
-        <div className="p-4 rounded-xl bg-gradient-to-r from-ide-card via-ide-panel to-ide-card border border-ide-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20">
-              <FileCode className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-slate-400">Target Analyzed:</span>
-                <span className="text-xs font-mono px-2 py-0.2 rounded bg-slate-800 text-slate-300">
-                  {ciaResult.targetPath}
-                </span>
-              </div>
-              <h2 className="text-base font-bold text-white font-mono mt-0.5">{ciaResult.targetName}</h2>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                openFile(selectedScenario === 'payment' ? 'payment-service' : 'auth-service');
-                setActiveView('editor');
-              }}
-              className="px-3 py-1.5 rounded-lg bg-ide-card hover:bg-ide-hover border border-ide-border text-slate-300 text-xs font-mono flex items-center gap-1.5 transition-colors"
-            >
-              <span>View Source</span>
-              <ArrowRight className="w-3 h-3" />
-            </button>
-            {/* Knowledge Graph disabled:
-            <button
-              onClick={() => setActiveView('graph')}
-              className="px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-mono flex items-center gap-1.5 transition-colors"
-            >
-              <GitFork className="w-3 h-3 text-cyan-400" />
-              <span>Trace in Knowledge Graph</span>
-            </button>
-            */}
-          </div>
-        </div>
-
-        {/* Direct vs Indirect Impact Breakdown */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Level 1: Direct Blast Radius */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2 font-mono">
-                <span className="w-2 h-2 rounded-full bg-amber-400" />
-                <span>Level 1: Directly Affected Components ({ciaResult.directAffected.length})</span>
-              </h3>
-              <span className="text-[10px] font-mono text-slate-400 uppercase">Immediate Callers</span>
-            </div>
-
-            <div className="space-y-2.5">
-              {ciaResult.directAffected.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3.5 rounded-xl bg-ide-panel border border-ide-border hover:border-amber-500/50 transition-all group cursor-pointer"
-                  onClick={() => {
-                    openFile(item.id);
-                    setActiveView('editor');
-                  }}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-2">
-                      <FileCode className="w-4 h-4 text-amber-400" />
-                      <span className="text-xs font-bold font-mono text-slate-200 group-hover:text-amber-300 transition-colors">
-                        {item.name}
+            <div className="mt-6 grid grid-cols-1 gap-8 xl:grid-cols-[1.1fr_1fr]">
+              <section aria-labelledby="direct-dependencies-heading">
+                <div className="mb-3 flex items-center justify-between border-b border-ide-border pb-2">
+                  <h2 id="direct-dependencies-heading" className="flex items-center gap-2 text-xs font-semibold text-ide-text"><span className="h-1.5 w-1.5 bg-ide-amber" aria-hidden="true" />Directly affected components</h2>
+                  <span className="font-mono text-[10px] text-ide-subtle">Level 1</span>
+                </div>
+                <div>
+                  {ciaResult.directAffected.map((item) => (
+                    <button key={item.id} type="button" onClick={() => { openFile(item.id); setActiveView('editor'); }} className="ide-focus-ring group flex w-full items-start gap-3 border-b border-ide-border py-3 text-left hover:bg-ide-hover/50">
+                      <FileCode className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ide-amber" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-center gap-2 text-xs font-semibold text-ide-text group-hover:text-ide-strong"><span>{item.name}</span><span className="font-mono text-[10px] font-normal text-ide-subtle">{item.type}</span></span>
+                        <span className="mt-1 block text-[11px] leading-relaxed text-ide-muted">{item.reason}</span>
+                        <span className="mt-1 block truncate font-mono text-[10px] text-ide-subtle">{item.path}</span>
                       </span>
-                    </div>
-                    <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                      {item.type}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-slate-400 font-sans leading-relaxed">
-                    {item.reason}
-                  </p>
-
-                  <div className="mt-2.5 pt-2 border-t border-ide-border/60 flex items-center justify-between text-[11px] font-mono text-slate-500">
-                    <span className="truncate max-w-[220px]">{item.path}</span>
-                    <span className="text-amber-400 flex items-center gap-1 group-hover:underline">
-                      Inspect Code <ChevronRight className="w-3 h-3" />
-                    </span>
-                  </div>
+                      <ChevronRight className="mt-1 h-3.5 w-3.5 shrink-0 text-ide-subtle group-hover:text-ide-amber" aria-hidden="true" />
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
+              </section>
 
-          {/* Level 2 & 3: Indirect Downstream Ripple */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2 font-mono">
-                <span className="w-2 h-2 rounded-full bg-cyan-400" />
-                <span>Level 2 & 3: Transitive Ripple Effect ({ciaResult.indirectAffected.length})</span>
-              </h3>
-              <span className="text-[10px] font-mono text-slate-400 uppercase">Graph Propagation</span>
-            </div>
-
-            <div className="space-y-2.5">
-              {ciaResult.indirectAffected.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3.5 rounded-xl bg-ide-panel border border-ide-border hover:border-cyan-500/50 transition-all group"
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-2">
-                      <Layers className="w-4 h-4 text-cyan-400" />
-                      <span className="text-xs font-bold font-mono text-slate-200 group-hover:text-cyan-300">
-                        {item.name}
-                      </span>
-                    </div>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                      Depth: {item.depth}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-slate-400 font-sans leading-relaxed">
-                    {item.reason}
-                  </p>
-
-                  <div className="mt-2.5 pt-2 border-t border-ide-border/60 text-[11px] font-mono text-slate-500 truncate">
-                    {item.path}
-                  </div>
+              <section aria-labelledby="ripple-heading">
+                <div className="mb-3 flex items-center justify-between border-b border-ide-border pb-2">
+                  <h2 id="ripple-heading" className="flex items-center gap-2 text-xs font-semibold text-ide-text"><span className="h-1.5 w-1.5 bg-ide-cyan" aria-hidden="true" />Transitive ripple</h2>
+                  <span className="font-mono text-[10px] text-ide-subtle">Levels 2–3</span>
                 </div>
-              ))}
-            </div>
-
-            {/* Proactive Test Recommendations Box */}
-            <div className="mt-6 p-4 rounded-xl bg-emerald-950/20 border border-emerald-500/30 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs">
-                  <FileCheck className="w-4 h-4" />
-                  <span>Proactive Test Recommendations (CIA Target)</span>
-                </div>
-                <span className="text-[10px] font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">
-                  2 Targeted Suites
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {ciaResult.recommendedTests.map((t) => (
-                  <div key={t.id} className="p-2.5 rounded-lg bg-ide-card/80 border border-ide-border flex items-center justify-between text-xs">
-                    <div>
-                      <div className="font-mono text-slate-200 font-semibold">{t.testSuite}</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">{t.reason}</div>
+                <div>
+                  {ciaResult.indirectAffected.map((item) => (
+                    <div key={item.id} className="flex items-start gap-3 border-b border-ide-border py-3">
+                      <Layers className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ide-cyan" aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-ide-text"><span>{item.name}</span><span className="font-mono text-[10px] font-normal text-ide-cyan">Depth {item.depth}</span></div>
+                        <p className="mt-1 text-[11px] leading-relaxed text-ide-muted">{item.reason}</p>
+                        <span className="mt-1 block truncate font-mono text-[10px] text-ide-subtle">{item.path}</span>
+                      </div>
                     </div>
-                    <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                      {t.priority}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
 
-              <button
-                onClick={() => {
-                  setActiveView('validation');
-                  runTests();
-                }}
-                disabled={isExecutingTests}
-                className="w-full py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-2 transition-colors shadow-sm"
-              >
-                <Play className="w-3.5 h-3.5" />
-                <span>{isExecutingTests ? 'Executing Affected Test Suites...' : 'Execute Recommended Tests in Validation Engine'}</span>
-              </button>
+                <div className="mt-6 border-t border-ide-border pt-4" aria-labelledby="recommended-tests-heading">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 id="recommended-tests-heading" className="flex items-center gap-2 text-xs font-semibold text-ide-text"><FileCheck className="h-3.5 w-3.5 text-ide-emerald" aria-hidden="true" />Recommended tests</h2>
+                    <span className="font-mono text-[10px] text-ide-subtle">Verification queue</span>
+                  </div>
+                  {ciaResult.recommendedTests.map((test) => (
+                    <div key={test.id} className="flex items-start gap-3 border-b border-ide-border py-2.5">
+                      <span className="mt-1 h-1.5 w-1.5 shrink-0 bg-ide-emerald" aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-ide-text"><span className="font-mono">{test.testSuite}</span><span className="font-mono text-[10px] uppercase text-ide-emerald">{test.priority}</span></div>
+                        <p className="mt-1 text-[11px] text-ide-muted">{test.reason}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
             </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
-    </div>
+    </section>
   );
 };

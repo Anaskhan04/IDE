@@ -1,28 +1,27 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { Check, Database, X } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 import { AVAILABLE_MODELS } from '../../data/mockModels';
-import { AIModel } from '../../types/ide';
-import { 
-  X, 
-  Check, 
-  Sparkles, 
-  Zap, 
-  ArrowRight, 
-  ShieldCheck, 
-  Cpu, 
-  Layers,
-  Database
-} from 'lucide-react';
+import type { AIModel } from '../../types/ide';
 
 export const ModelSwitcherModal: React.FC = () => {
-  const { 
-    isModelSwitchingModalOpen, 
-    setIsModelSwitchingModalOpen, 
-    activeModel, 
+  const {
+    isModelSwitchingModalOpen,
+    setIsModelSwitchingModalOpen,
+    activeModel,
     setActiveModel,
     sendChatMessage,
-    masterPrompt
+    masterPrompt,
   } = useIDE();
+
+  useEffect(() => {
+    if (!isModelSwitchingModalOpen) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsModelSwitchingModalOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isModelSwitchingModalOpen, setIsModelSwitchingModalOpen]);
 
   if (!isModelSwitchingModalOpen) return null;
 
@@ -35,125 +34,61 @@ export const ModelSwitcherModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="bg-ide-panel border border-ide-border rounded-xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Modal Header */}
-        <div className="p-4 border-b border-ide-border flex items-center justify-between bg-ide-sidebar/80">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-              <Cpu className="w-5 h-5" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation">
+      <section className="flex max-h-[90vh] w-full max-w-2xl flex-col border border-ide-border-strong bg-ide-panel" role="dialog" aria-modal="true" aria-labelledby="model-switcher-title">
+        <header className="flex items-start justify-between gap-4 border-b border-ide-border px-4 py-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 id="model-switcher-title" className="text-sm font-semibold text-ide-strong">Model gateway</h2>
+              <span className="font-mono text-[10px] text-ide-emerald">Shared context active</span>
             </div>
-            <div>
-              <h2 className="text-base font-semibold text-white flex items-center gap-2">
-                <span>Model Gateway Switcher</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Zero Context Loss
-                </span>
-              </h2>
-              <p className="text-xs text-slate-400">
-                Switch coding models mid-task without re-reading the project or losing state.
-              </p>
-            </div>
+            <p className="mt-1 text-xs text-ide-muted">Switch coding models without re-reading the project or losing state.</p>
           </div>
-          <button
-            onClick={() => setIsModelSwitchingModalOpen(false)}
-            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-ide-hover transition-colors"
-          >
-            <X className="w-5 h-5" />
+          <button type="button" onClick={() => setIsModelSwitchingModalOpen(false)} className="ide-focus-ring flex h-8 w-8 items-center justify-center text-ide-muted hover:bg-ide-hover hover:text-ide-text" aria-label="Close model gateway">
+            <X className="h-4 w-4" />
           </button>
+        </header>
+
+        <div className="flex items-center gap-2 border-b border-ide-border bg-ide-surface px-4 py-3 text-[11px] text-ide-muted">
+          <Database className="h-3.5 w-3.5 text-ide-cyan" aria-hidden="true" />
+          <span>Persistent project context: <span className="font-mono text-ide-text">{masterPrompt.astVersion || 'Unknown'}</span></span>
+          <span className="ml-auto font-mono text-[10px] text-ide-subtle">{masterPrompt.invariants.length} invariants</span>
         </div>
 
-        {/* Persistent Context Handover Banner */}
-        <div className="bg-gradient-to-r from-blue-900/20 via-cyan-900/20 to-emerald-900/20 border-b border-ide-border p-3.5 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-2 text-cyan-300">
-            <Database className="w-4 h-4 text-cyan-400 shrink-0" />
-            <span>
-              <strong>Persistent Project Context Ready:</strong> Shared AST symbol index ({masterPrompt.astVersion}) will be instantaneously provided to the new model.
-            </span>
-          </div>
-          <span className="text-[10px] font-mono bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded whitespace-nowrap ml-2">
-            100% Shared Cache
-          </span>
-        </div>
-
-        {/* Models List */}
-        <div className="p-4 overflow-y-auto space-y-3">
+        <div className="min-h-0 overflow-y-auto">
           {AVAILABLE_MODELS.map((model) => {
             const isSelected = model.id === activeModel.id;
             return (
-              <div
+              <button
                 key={model.id}
+                type="button"
                 onClick={() => handleSelectModel(model)}
-                className={`p-3.5 rounded-xl border transition-all cursor-pointer relative group ${
-                  isSelected
-                    ? 'bg-ide-card border-cyan-500 shadow-md shadow-cyan-500/10 ring-1 ring-cyan-500/50'
-                    : 'bg-ide-card/50 border-ide-border hover:border-slate-600 hover:bg-ide-card'
-                }`}
+                className={`ide-focus-ring flex w-full items-start gap-3 border-b border-ide-border px-4 py-4 text-left transition-colors ${isSelected ? 'bg-ide-selected' : 'hover:bg-ide-hover'}`}
+                aria-pressed={isSelected}
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-lg bg-gradient-to-tr ${model.color} flex items-center justify-center text-white shadow-md font-bold text-sm`}>
-                      {model.name.substring(0, 2)}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-white group-hover:text-cyan-300 transition-colors">
-                          {model.name}
-                        </h3>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                          {model.provider}
-                        </span>
-                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                          {model.badge}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 mt-1">{model.description}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 shrink-0 ml-4">
-                    <div className="text-right font-mono text-[11px] hidden sm:block">
-                      <div className="text-slate-300">Context: {model.contextWindow}</div>
-                      <div className="text-slate-500">{model.costPer1k}/1k tokens</div>
-                    </div>
-                    {isSelected ? (
-                      <div className="w-7 h-7 rounded-full bg-cyan-500 text-slate-900 flex items-center justify-center font-bold">
-                        <Check className="w-4 h-4" />
-                      </div>
-                    ) : (
-                      <button className="px-3 py-1.5 rounded-lg bg-ide-hover hover:bg-cyan-600 text-xs font-medium text-slate-200 group-hover:text-white transition-colors">
-                        Select
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Benefits comparison */}
-                <div className="mt-3 pt-2.5 border-t border-ide-border flex items-center justify-between text-[11px] font-mono text-slate-400">
-                  <span className="flex items-center gap-1 text-emerald-400">
-                    <Zap className="w-3 h-3" /> Re-reads eliminated: 9 files (~18k tokens saved)
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center border border-ide-border-strong bg-ide-card font-mono text-[10px] font-semibold text-ide-cyan`}>{model.name.substring(0, 2)}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="text-xs font-semibold text-ide-text">{model.name}</span>
+                    <span className="font-mono text-[10px] text-ide-subtle">{model.provider}</span>
+                    <span className="font-mono text-[10px] text-ide-cyan">{model.badge}</span>
                   </span>
-                  <span className="text-slate-500">Handover Latency: &lt; 1.2s</span>
-                </div>
-              </div>
+                  <span className="mt-1 block text-xs leading-relaxed text-ide-muted">{model.description}</span>
+                  <span className="mt-2 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10px] text-ide-subtle"><span>Context {model.contextWindow}</span><span>{model.costPer1k}/1k tokens</span></span>
+                </span>
+                <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center border ${isSelected ? 'border-ide-emerald bg-ide-emerald text-ide-shell' : 'border-ide-border-strong text-transparent'}`} aria-label={isSelected ? 'Selected model' : 'Select model'}>
+                  <Check className="h-3.5 w-3.5" />
+                </span>
+              </button>
             );
           })}
         </div>
 
-        {/* Modal Footer */}
-        <div className="p-3 border-t border-ide-border bg-ide-sidebar/80 flex items-center justify-between text-xs text-slate-400">
-          <div className="flex items-center gap-1.5">
-            <ShieldCheck className="w-4 h-4 text-cyan-400" />
-            <span>AST symbol table and call graph are synchronized.</span>
-          </div>
-          <button
-            onClick={() => setIsModelSwitchingModalOpen(false)}
-            className="px-4 py-1.5 rounded-lg bg-ide-card hover:bg-ide-hover border border-ide-border text-slate-300 transition-colors"
-          >
-            Close
-          </button>
-        </div>
-      </div>
+        <footer className="flex items-center justify-between gap-3 border-t border-ide-border px-4 py-3 font-mono text-[10px] text-ide-subtle">
+          <span>AST symbol table and call graph remain synchronized.</span>
+          <button type="button" onClick={() => setIsModelSwitchingModalOpen(false)} className="ide-focus-ring border border-ide-border-strong px-3 py-1.5 text-ide-text hover:bg-ide-hover">Close</button>
+        </footer>
+      </section>
     </div>
   );
 };

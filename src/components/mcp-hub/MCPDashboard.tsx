@@ -1,105 +1,149 @@
-import React, { useState } from 'react';
-import { useIDE } from '../../context/IDEContext';
-import { MCPServer, MCPTool } from '../../types/ide';
-import { 
-  Layers, 
-  Server, 
-  Terminal, 
-  Key, 
-  ShieldCheck, 
-  Play, 
-  CheckCircle2, 
-  AlertCircle, 
-  Plus, 
-  Check, 
-  Lock, 
-  ExternalLink,
-  Code2,
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Database,
-  Globe,
-  Github,
-  MessageSquare,
   FolderSync,
-  Radio,
-  Sparkles
+  Github,
+  Globe,
+  Key,
+  Lock,
+  MessageSquare,
+  Play,
+  Plus,
+  Server,
+  Terminal,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { useIDE } from '../../context/IDEContext';
+import type { MCPServer, MCPTool } from '../../types/ide';
+
+const permissionClass: Record<MCPTool['permission'], string> = {
+  read: 'text-ide-focus',
+  write: 'text-ide-amber',
+  execute: 'text-ide-purple',
+};
+
+const getServerIcon = (name: string): LucideIcon => {
+  switch (name) {
+    case 'Github': return Github;
+    case 'Database': return Database;
+    case 'Globe': return Globe;
+    case 'MessageSquare': return MessageSquare;
+    default: return FolderSync;
+  }
+};
+
+const serverState = (server: MCPServer) => {
+  if (server.status === 'connected') return { label: 'Connected', className: 'text-ide-emerald', marker: 'bg-ide-emerald' };
+  if (server.status === 'connecting') return { label: 'Connecting', className: 'text-ide-amber', marker: 'bg-ide-amber' };
+  if (server.status === 'error') return { label: 'Error', className: 'text-ide-rose', marker: 'bg-ide-rose' };
+  return { label: 'Offline', className: 'text-ide-subtle', marker: 'bg-ide-subtle' };
+};
 
 export const MCPDashboard: React.FC = () => {
   const { mcpServers, toggleMcpTool, toggleMcpServer } = useIDE();
-  const [selectedServer, setSelectedServer] = useState<MCPServer>(mcpServers[0]);
-  const [selectedTool, setSelectedTool] = useState<MCPTool | null>(mcpServers[0].tools[0] || null);
-  const [toolArgsJson, setToolArgsJson] = useState<string>(
-    JSON.stringify(mcpServers[0].tools[0]?.sampleArgs || {}, null, 2)
-  );
+  const [selectedServerId, setSelectedServerId] = useState<string | null>(mcpServers[0]?.id ?? null);
+  const [selectedToolName, setSelectedToolName] = useState<string | null>(mcpServers[0]?.tools[0]?.name ?? null);
+  const [toolArgsJson, setToolArgsJson] = useState('{}');
   const [executionOutput, setExecutionOutput] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [isVaultOpen, setIsVaultOpen] = useState(false);
+  const [jsonError, setJsonError] = useState<string | null>(null);
 
-  const getIcon = (name: string) => {
-    switch (name) {
-      case 'Github': return Github;
-      case 'Database': return Database;
-      case 'Globe': return Globe;
-      case 'MessageSquare': return MessageSquare;
-      default: return FolderSync;
+  const selectedServer = useMemo(
+    () => mcpServers.find((server) => server.id === selectedServerId) ?? mcpServers[0] ?? null,
+    [mcpServers, selectedServerId],
+  );
+  const selectedTool = useMemo(
+    () => selectedServer?.tools.find((tool) => tool.name === selectedToolName) ?? selectedServer?.tools[0] ?? null,
+    [selectedServer, selectedToolName],
+  );
+
+  useEffect(() => {
+    if (!mcpServers.length) {
+      setSelectedServerId(null);
+      setSelectedToolName(null);
+      return;
     }
-  };
+    if (!mcpServers.some((server) => server.id === selectedServerId)) setSelectedServerId(mcpServers[0].id);
+  }, [mcpServers, selectedServerId]);
+
+  useEffect(() => {
+    const firstToolName = selectedServer?.tools[0]?.name ?? null;
+    if (!selectedServer?.tools.some((tool) => tool.name === selectedToolName)) setSelectedToolName(firstToolName);
+  }, [selectedServer, selectedToolName]);
+
+  useEffect(() => {
+    setToolArgsJson(JSON.stringify(selectedTool?.sampleArgs || {}, null, 2));
+    setExecutionOutput(null);
+    setJsonError(null);
+  }, [selectedTool?.name]);
 
   const handleSelectTool = (tool: MCPTool) => {
-    setSelectedTool(tool);
+    setSelectedToolName(tool.name);
     setToolArgsJson(JSON.stringify(tool.sampleArgs, null, 2));
     setExecutionOutput(null);
+    setJsonError(null);
   };
 
   const handleExecuteTool = async () => {
-    if (!selectedTool) return;
+    if (!selectedServer || !selectedTool) return;
+    if (selectedServer.status !== 'connected' || !selectedTool.enabled) return;
+
+    try {
+      JSON.parse(toolArgsJson);
+      setJsonError(null);
+    } catch {
+      setJsonError('Invalid JSON. Fix the call arguments before executing.');
+      return;
+    }
+
     setIsExecuting(true);
     setExecutionOutput(null);
+    await new Promise((resolve) => setTimeout(resolve, 800));
 
-    await new Promise(r => setTimeout(r, 800));
-
-    let mockResponse: any;
+    let mockResponse: Record<string, unknown>;
     if (selectedTool.name === 'run_e2e_checkout_flow') {
       mockResponse = {
-        jsonrpc: "2.0",
-        id: "call_mcp_9012",
+        jsonrpc: '2.0',
+        id: 'call_mcp_9012',
         result: {
-          status: "PASSED",
+          status: 'PASSED',
           stepsExecuted: 4,
-          url: "http://localhost:3000/checkout",
+          url: 'http://localhost:3000/checkout',
           trace: [
-            "1. Cart payload initialized ($49.00)",
-            "2. Triggered processPayment() via paymentService.ts",
-            "3. Gateway response received: AUTH_OK_889",
-            "4. Confirmation screen verified"
+            '1. Cart payload initialized ($49.00)',
+            '2. Triggered processPayment() via paymentService.ts',
+            '3. Gateway response received: AUTH_OK_889',
+            '4. Confirmation screen verified',
           ],
-          duration: "1.82s"
-        }
+          duration: '1.82s',
+        },
       };
     } else if (selectedTool.name === 'introspect_schema') {
       mockResponse = {
-        jsonrpc: "2.0",
-        id: "call_mcp_9013",
+        jsonrpc: '2.0',
+        id: 'call_mcp_9013',
         result: {
-          schema: "public",
-          tables: ["users", "orders", "payment_transactions", "cart_items"],
-          constraints: [
-            "orders.user_id -> users.id (CASCADE)",
-            "payment_transactions.order_id -> orders.id (RESTRICT)"
-          ]
-        }
+          schema: 'public',
+          tables: ['users', 'orders', 'payment_transactions', 'cart_items'],
+          constraints: ['orders.user_id -> users.id (CASCADE)', 'payment_transactions.order_id -> orders.id (RESTRICT)'],
+        },
       };
     } else {
       mockResponse = {
-        jsonrpc: "2.0",
-        id: "call_mcp_9014",
+        jsonrpc: '2.0',
+        id: 'call_mcp_9014',
         result: {
           success: true,
           tool: selectedTool.name,
           server: selectedServer.name,
           timestamp: new Date().toISOString(),
-          data: "Simulated MCP operation completed with zero authentication prompt."
-        }
+          data: 'Simulated MCP operation completed with zero authentication prompt.',
+        },
       };
     }
 
@@ -108,265 +152,142 @@ export const MCPDashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 bg-ide-bg h-[calc(100vh-3.5rem-1.75rem)] overflow-y-auto p-6 select-none font-sans">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-ide-border">
+    <section id="mcp-workspace" className="flex h-full min-h-0 flex-col overflow-y-auto bg-ide-bg" data-purpose="mcp-workspace">
+      <div className="mx-auto w-full max-w-[1220px] px-5 py-6 lg:px-8">
+        <header className="flex flex-col gap-4 border-b border-ide-border pb-5 2xl:flex-row 2xl:items-end 2xl:justify-between">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
-                <Layers className="w-5 h-5" />
-              </div>
-              <h1 className="text-xl font-bold text-white">Centralized MCP & Integration Hub</h1>
-              <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                Unified Protocol
-              </span>
+            <div className="flex items-center gap-2">
+              <Server className="h-4 w-4 text-ide-cyan" aria-hidden="true" />
+              <h1 className="text-base font-semibold text-ide-strong">MCP hub</h1>
             </div>
-            <p className="text-xs text-slate-400 max-w-2xl">
-              Eliminate fragmented per-project setup. Centralize MCP servers, tool definitions, permissions, and API keys across Claude, GPT-4o, Gemini, and DeepSeek.
-            </p>
+            <p className="mt-2 max-w-2xl text-xs leading-relaxed text-ide-muted">Inspect connected servers, tool permissions, and the exact call response.</p>
           </div>
+          <button type="button" disabled className="ide-focus-ring inline-flex min-h-[32px] cursor-not-allowed items-center gap-2 border border-ide-border-strong px-3 text-xs text-ide-subtle" title="Connecting new MCP servers is not available in this build">
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+            Connect MCP server unavailable
+          </button>
+        </header>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setIsVaultOpen(!isVaultOpen)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-ide-panel hover:bg-ide-hover border border-ide-border text-slate-300 text-xs font-mono transition-colors"
-            >
-              <Key className="w-3.5 h-3.5 text-amber-400" />
-              <span>Central Key Vault</span>
-            </button>
-            <button
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Connect MCP Server</span>
-            </button>
-          </div>
+        <div className="mt-5 border border-ide-border bg-ide-panel">
+          <button type="button" onClick={() => setIsVaultOpen((open) => !open)} className="ide-focus-ring flex min-h-[38px] w-full items-center gap-2 px-3 text-left hover:bg-ide-hover">
+            {isVaultOpen ? <ChevronDown className="h-3.5 w-3.5 text-ide-amber" /> : <ChevronRight className="h-3.5 w-3.5 text-ide-amber" />}
+            <Key className="h-3.5 w-3.5 text-ide-amber" aria-hidden="true" />
+            <span className="text-xs font-semibold text-ide-text">Centralized credentials &amp; API key vault</span>
+            <span className="ml-auto font-mono text-[10px] text-ide-subtle">Configured once, inherited by tools</span>
+          </button>
+          {isVaultOpen && (
+            <div className="grid border-t border-ide-border sm:grid-cols-3">
+              {[
+                ['GITHUB_PERSONAL_ACCESS_TOKEN', 'ghp_••••••••••••94b'],
+                ['POSTGRES_CONNECTION_URI', 'postgresql://•••••••:5432'],
+                ['STRIPE_SECRET_KEY', 'sk_test_•••••••••88f'],
+              ].map(([name, value]) => (
+                <div key={name} className="flex items-center justify-between gap-3 border-b border-ide-border p-3 font-mono text-[10px] sm:border-b-0 sm:border-r last:border-r-0">
+                  <div className="min-w-0"><span className="block truncate text-ide-subtle">{name}</span><span className="mt-1 block truncate text-ide-text">{value}</span></div>
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-ide-emerald" aria-label="Configured" />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Central Key Vault Modal / Bar */}
-        {isVaultOpen && (
-          <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/20 via-ide-panel to-ide-card border border-amber-500/30 space-y-3 animate-in fade-in duration-200">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-bold text-amber-300 font-mono">
-                <Lock className="w-4 h-4 text-amber-400" />
-                <span>Centralized Credentials & API Key Vault</span>
+        {!selectedServer ? (
+          <div className="mt-5 border-l-2 border-ide-border-strong bg-ide-panel px-4 py-4">
+            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-ide-subtle">No MCP servers</div>
+            <p className="mt-2 text-sm text-ide-text">Connect a server to inspect its tools.</p>
+          </div>
+        ) : (
+          <div className="mt-5 grid gap-5 2xl:grid-cols-[minmax(260px,0.8fr)_minmax(0,1.8fr)]">
+            <section aria-labelledby="server-register-heading" className="border border-ide-border bg-ide-panel">
+              <div className="flex min-h-[40px] items-center justify-between border-b border-ide-border px-3">
+                <h2 id="server-register-heading" className="text-xs font-semibold text-ide-text">Server register</h2>
+                <span className="font-mono text-[10px] text-ide-subtle">{mcpServers.length} servers</span>
               </div>
-              <span className="text-[10px] font-mono text-slate-400">Configured once, inherited by all models</span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-mono">
-              <div className="p-2.5 rounded-lg bg-ide-card border border-ide-border flex items-center justify-between">
-                <div>
-                  <span className="text-slate-400 block text-[10px]">GITHUB_PERSONAL_ACCESS_TOKEN</span>
-                  <span className="text-emerald-400 font-bold">ghp_••••••••••••94b</span>
+              <div>
+                {mcpServers.map((server) => {
+                  const Icon = getServerIcon(server.icon);
+                  const isSelected = server.id === selectedServer.id;
+                  const status = serverState(server);
+                  return (
+                    <div key={server.id} className={`flex border-b border-ide-border ${isSelected ? 'border-l-2 border-l-ide-cyan bg-ide-selected' : 'border-l-2 border-l-transparent hover:bg-ide-hover/60'}`}>
+                      <button type="button" onClick={() => { setSelectedServerId(server.id); setSelectedToolName(server.tools[0]?.name ?? null); }} className="ide-focus-ring min-w-0 flex-1 px-3 py-3 text-left" aria-selected={isSelected}>
+                        <div className="flex items-start gap-2">
+                          <Icon className="mt-0.5 h-4 w-4 shrink-0 text-ide-cyan" aria-hidden="true" />
+                          <span className="min-w-0">
+                            <span className="block truncate font-mono text-xs text-ide-text">{server.name}</span>
+                            <span className="mt-1 block font-mono text-[10px] text-ide-subtle">{server.transport} · {server.tools.length} tools</span>
+                          </span>
+                        </div>
+                        <span className={`mt-2 flex items-center gap-1.5 font-mono text-[10px] ${status.className}`}><span className={`h-1.5 w-1.5 ${status.marker}`} aria-hidden="true" />{status.label}</span>
+                      </button>
+                      <button type="button" onClick={() => toggleMcpServer(server.id)} className="ide-focus-ring self-start px-3 py-3 text-[10px] text-ide-subtle hover:text-ide-text" aria-label={`${server.status === 'connected' ? 'Disconnect' : 'Connect'} ${server.name}`}>
+                        {server.status === 'connected' ? 'On' : 'Off'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            <div className="min-w-0 space-y-5">
+              <section aria-labelledby="tool-manifest-heading" className="border border-ide-border bg-ide-panel">
+                <div className="flex min-h-[40px] items-center justify-between border-b border-ide-border px-3">
+                  <h2 id="tool-manifest-heading" className="text-xs font-semibold text-ide-text">Tool manifest <span className="font-mono text-ide-subtle">/ {selectedServer.name}</span></h2>
+                  <span className="font-mono text-[10px] text-ide-subtle">Permission · state</span>
                 </div>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              </div>
-              <div className="p-2.5 rounded-lg bg-ide-card border border-ide-border flex items-center justify-between">
-                <div>
-                  <span className="text-slate-400 block text-[10px]">POSTGRES_CONNECTION_URI</span>
-                  <span className="text-emerald-400 font-bold">postgresql://•••••••:5432</span>
+                <div className="hidden grid-cols-[minmax(150px,0.8fr)_minmax(180px,1.5fr)_80px_72px] gap-3 border-b border-ide-border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ide-subtle md:grid">
+                  <span>Tool</span><span>Description</span><span>Permission</span><span>State</span>
                 </div>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              </div>
-              <div className="p-2.5 rounded-lg bg-ide-card border border-ide-border flex items-center justify-between">
-                <div>
-                  <span className="text-slate-400 block text-[10px]">STRIPE_SECRET_KEY</span>
-                  <span className="text-emerald-400 font-bold">sk_test_•••••••••88f</span>
+                {selectedServer.tools.length === 0 ? (
+                  <div className="px-3 py-4 font-mono text-[10px] text-ide-subtle">No tools exposed by this server.</div>
+                ) : selectedServer.tools.map((tool) => {
+                  const isSelected = selectedTool?.name === tool.name;
+                  return (
+                    <div key={tool.name} className={`grid items-start gap-3 border-b border-ide-border px-3 py-3 md:grid-cols-[minmax(150px,0.8fr)_minmax(180px,1.5fr)_80px_72px] ${isSelected ? 'bg-ide-selected/60' : 'hover:bg-ide-hover/60'}`}>
+                      <button type="button" onClick={() => handleSelectTool(tool)} className="ide-focus-ring min-w-0 text-left font-mono text-xs text-ide-text" aria-selected={isSelected}>{tool.name}</button>
+                      <button type="button" onClick={() => handleSelectTool(tool)} className="ide-focus-ring text-left text-[11px] leading-relaxed text-ide-muted">{tool.description}</button>
+                      <span className={`font-mono text-[10px] uppercase ${permissionClass[tool.permission]}`}>{tool.permission}</span>
+                      <button type="button" onClick={() => toggleMcpTool(selectedServer.id, tool.name)} className={`ide-focus-ring font-mono text-[10px] ${tool.enabled ? 'text-ide-emerald' : 'text-ide-subtle'}`} aria-pressed={tool.enabled} aria-label={`${tool.name} ${tool.enabled ? 'enabled' : 'disabled'}`}>
+                        {tool.enabled ? 'Enabled' : 'Disabled'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </section>
+
+              <section aria-labelledby="invocation-bench-heading" className="border border-ide-border bg-ide-panel">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ide-border px-3 py-3">
+                  <h2 id="invocation-bench-heading" className="flex items-center gap-2 text-xs font-semibold text-ide-text"><Terminal className="h-3.5 w-3.5 text-ide-cyan" aria-hidden="true" />Invocation bench <span className="font-mono text-ide-cyan">{selectedTool?.name || 'No tool selected'}</span></h2>
+                  <span className="font-mono text-[10px] text-ide-subtle">JSON-RPC 2.0</span>
                 </div>
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              </div>
+                <div className="grid gap-4 p-3 lg:grid-cols-2">
+                  <div>
+                    <label htmlFor="mcp-call-args" className="mb-1.5 block font-mono text-[10px] text-ide-muted">Call arguments (JSON)</label>
+                    <textarea id="mcp-call-args" rows={8} value={toolArgsJson} onChange={(event) => { setToolArgsJson(event.target.value); setJsonError(null); }} className={`ide-focus-ring w-full resize-y border bg-ide-code p-3 font-mono text-[11px] text-ide-text outline-none ${jsonError ? 'border-ide-rose' : 'border-ide-border-strong focus:border-ide-focus'}`} aria-describedby={jsonError ? 'mcp-json-error' : undefined} />
+                    {jsonError && <div id="mcp-json-error" className="mt-2 flex items-start gap-1.5 font-mono text-[10px] text-ide-rose"><AlertCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />{jsonError}</div>}
+                  </div>
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] text-ide-muted"><span>Response</span>{executionOutput && <span className="text-ide-emerald">Success · 124ms</span>}</div>
+                    {executionOutput ? <pre className="max-h-56 overflow-auto border border-ide-border-strong bg-ide-code p-3 font-mono text-[11px] leading-relaxed text-ide-emerald">{executionOutput}</pre> : <div className="flex min-h-[174px] items-center justify-center border border-dashed border-ide-border-strong bg-ide-code px-4 text-center font-mono text-[10px] text-ide-subtle">Tool response will appear here after execution.</div>}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-3 border-t border-ide-border px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2 font-mono text-[10px] text-ide-muted">
+                    <Lock className="h-3 w-3 text-ide-amber" aria-hidden="true" />
+                    Permissions: <span className={selectedTool ? permissionClass[selectedTool.permission] : 'text-ide-subtle'}>{selectedTool?.permission.toUpperCase() || 'NONE'}</span>
+                    {selectedServer.status !== 'connected' && <span className="text-ide-rose">· Server offline</span>}
+                    {selectedTool && !selectedTool.enabled && <span className="text-ide-rose">· Tool disabled</span>}
+                  </div>
+                  <button type="button" onClick={handleExecuteTool} disabled={isExecuting || !selectedTool || !selectedTool.enabled || selectedServer.status !== 'connected'} className="ide-focus-ring inline-flex min-h-[32px] items-center justify-center gap-2 bg-ide-focus px-3 text-xs font-semibold text-white hover:bg-ide-focus/85 disabled:cursor-not-allowed disabled:bg-ide-border disabled:text-ide-subtle">
+                    <Play className="h-3.5 w-3.5" aria-hidden="true" />
+                    {isExecuting ? 'Calling server' : 'Execute tool call'}
+                  </button>
+                </div>
+              </section>
             </div>
           </div>
         )}
-
-        {/* Servers Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {mcpServers.map((server) => {
-            const Icon = getIcon(server.icon);
-            const isSelected = selectedServer.id === server.id;
-            const isConnected = server.status === 'connected';
-
-            return (
-              <div
-                key={server.id}
-                onClick={() => {
-                  setSelectedServer(server);
-                  if (server.tools.length > 0) {
-                    handleSelectTool(server.tools[0]);
-                  }
-                }}
-                className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
-                  isSelected
-                    ? 'bg-ide-panel border-blue-500 shadow-md shadow-blue-500/10 ring-1 ring-blue-500/40'
-                    : 'bg-ide-panel/60 border-ide-border hover:bg-ide-panel hover:border-slate-600'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-lg bg-slate-800 text-cyan-400">
-                        <Icon className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h3 className="text-xs font-bold text-white font-mono">{server.name}</h3>
-                        <span className="text-[10px] font-mono text-slate-400 uppercase">
-                          Transport: {server.transport}
-                        </span>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleMcpServer(server.id);
-                      }}
-                      className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors ${
-                        isConnected
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                          : 'bg-slate-800 text-slate-500 border-slate-700'
-                      }`}
-                    >
-                      {isConnected ? 'ONLINE' : 'OFFLINE'}
-                    </button>
-                  </div>
-
-                  <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
-                    {server.description}
-                  </p>
-                </div>
-
-                <div className="mt-4 pt-3 border-t border-ide-border/60 flex items-center justify-between text-xs font-mono text-slate-400">
-                  <span className="text-slate-300">{server.tools.length} Tools Exposed</span>
-                  <span className="text-cyan-400 flex items-center gap-1">
-                    Manage Tools →
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Selected Server Details & Tool Execution Tester */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Tool Definitions & Permissions (5 cols) */}
-          <div className="lg:col-span-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-white uppercase font-mono tracking-wider flex items-center gap-2">
-                <Server className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Exposed Tools: {selectedServer.name}</span>
-              </h3>
-              <span className="text-[10px] font-mono text-slate-500">Fine-grained RBAC</span>
-            </div>
-
-            <div className="space-y-2">
-              {selectedServer.tools.map((tool) => {
-                const isSelected = selectedTool?.name === tool.name;
-                return (
-                  <div
-                    key={tool.name}
-                    onClick={() => handleSelectTool(tool)}
-                    className={`p-3 rounded-xl border transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-ide-card border-cyan-500/60 shadow-sm'
-                        : 'bg-ide-panel/80 border-ide-border hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-mono font-bold text-slate-200">
-                        {tool.name}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[9px] font-mono uppercase px-1.5 py-0.2 rounded ${
-                          tool.permission === 'read' ? 'bg-blue-500/20 text-blue-300' :
-                          tool.permission === 'write' ? 'bg-amber-500/20 text-amber-300' :
-                          'bg-purple-500/20 text-purple-300'
-                        }`}>
-                          {tool.permission}
-                        </span>
-
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleMcpTool(selectedServer.id, tool.name);
-                          }}
-                          className={`w-6 h-3.5 rounded-full transition-colors relative p-0.5 ${
-                            tool.enabled ? 'bg-emerald-500' : 'bg-slate-700'
-                          }`}
-                        >
-                          <div className={`w-2.5 h-2.5 rounded-full bg-white transition-transform ${
-                            tool.enabled ? 'translate-x-2.5' : 'translate-x-0'
-                          }`} />
-                        </button>
-                      </div>
-                    </div>
-                    <p className="text-xs text-slate-400 font-sans mt-1 leading-snug">
-                      {tool.description}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Interactive Tool Sandbox (7 cols) */}
-          <div className="lg:col-span-7 bg-ide-panel border border-ide-border rounded-xl p-4 flex flex-col justify-between space-y-4">
-            <div>
-              <div className="flex items-center justify-between pb-3 border-b border-ide-border">
-                <div className="flex items-center gap-2">
-                  <Terminal className="w-4 h-4 text-cyan-400" />
-                  <span className="text-xs font-bold text-white font-mono">
-                    MCP Tool Execution Sandbox: <span className="text-cyan-300">{selectedTool?.name}</span>
-                  </span>
-                </div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400">
-                  JSON-RPC 2.0
-                </span>
-              </div>
-
-              {/* JSON Parameters Input */}
-              <div className="mt-3 space-y-1.5">
-                <label className="text-[11px] font-mono text-slate-400">Call Arguments (JSON):</label>
-                <textarea
-                  rows={5}
-                  value={toolArgsJson}
-                  onChange={(e) => setToolArgsJson(e.target.value)}
-                  className="w-full bg-code p-3 rounded-lg border border-ide-border text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500/60"
-                />
-              </div>
-
-              {/* Execution Output */}
-              {executionOutput && (
-                <div className="mt-4 space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px] font-mono text-emerald-400">
-                    <span>Tool Call Response (Success):</span>
-                    <span className="text-slate-500">Latency: 124ms</span>
-                  </div>
-                  <pre className="bg-code p-3 rounded-lg border border-ide-border text-xs font-mono text-emerald-300 overflow-x-auto max-h-48">
-                    {executionOutput}
-                  </pre>
-                </div>
-              )}
-            </div>
-
-            {/* Action trigger */}
-            <div className="pt-3 border-t border-ide-border flex items-center justify-between">
-              <span className="text-[11px] text-slate-500 font-mono">
-                Permissions: {selectedTool?.permission.toUpperCase()} allowed
-              </span>
-
-              <button
-                onClick={handleExecuteTool}
-                disabled={isExecuting || !selectedTool?.enabled}
-                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white text-xs font-semibold flex items-center gap-2 transition-colors shadow-sm"
-              >
-                <Play className="w-3.5 h-3.5" />
-                <span>{isExecuting ? 'Calling MCP Server...' : 'Execute Tool Call'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
-    </div>
+    </section>
   );
 };
