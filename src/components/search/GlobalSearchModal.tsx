@@ -41,6 +41,8 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     saveFile,
     saveAllFiles,
     openProjectFolder,
+    openWorkspaceByPath,
+    workspacePath,
     createFile,
     setSidebarView,
     setIsSidebarVisible,
@@ -55,6 +57,8 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     isCopilotOpen,
     setIsCopilotOpen,
     setTargetEditorLine,
+    toggleProblemsPanel,
+    setIsProblemsPanelOpen,
   } = useIDE();
 
   const [query, setQuery] = useState(initialQuery);
@@ -110,6 +114,20 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       },
     },
     {
+      id: 'cmd-open-folder-by-path',
+      title: 'File: Open Workspace by Path...',
+      category: 'File',
+      action: () => {
+        const input = window.prompt(
+          'Enter local folder path (e.g. C:\\Users\\ASUS\\Downloads\\Anas\\vs code\\INTERNSHIP\\HRFlow):',
+          workspacePath || ''
+        );
+        if (input) {
+          openWorkspaceByPath(input);
+        }
+      },
+    },
+    {
       id: 'cmd-toggle-sidebar',
       title: 'View: Toggle Primary Sidebar',
       category: 'View',
@@ -156,6 +174,15 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       action: () => {
         setSidebarView('settings');
         setIsSidebarVisible(true);
+      },
+    },
+    {
+      id: 'cmd-view-problems',
+      title: 'View: Toggle Problems Panel (Diagnostics)',
+      category: 'View',
+      shortcut: 'Ctrl+Shift+M',
+      action: () => {
+        toggleProblemsPanel();
       },
     },
     {

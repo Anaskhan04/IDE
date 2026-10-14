@@ -1,5 +1,5 @@
 import React from 'react';
-import { GitBranch, RefreshCw } from 'lucide-react';
+import { AlertTriangle, GitBranch, RefreshCw, XCircle } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 
 export const StatusBar: React.FC = () => {
@@ -9,13 +9,21 @@ export const StatusBar: React.FC = () => {
     files,
     activeFileId,
     gitBranch,
+    isGitRepo,
+    stagedFiles,
+    unstagedFiles,
     stagedFileIds,
     setSidebarView,
     setIsSidebarVisible,
+    diagnosticsSummary,
+    toggleProblemsPanel,
+    isProblemsPanelOpen,
   } = useIDE();
   const activeFile = files.find((file) => file.id === activeFileId);
 
-  const changedCount = files.filter((f) => f.isDirty || f.isModified).length + stagedFileIds.length;
+  const changedCount = isGitRepo
+    ? stagedFiles.length + unstagedFiles.length
+    : files.filter((f) => f.isDirty || f.isModified).length + stagedFileIds.length;
 
   const languageLabel = activeFile
     ? activeFile.name.endsWith('.c') || activeFile.name.endsWith('.h')
@@ -50,11 +58,11 @@ export const StatusBar: React.FC = () => {
             setIsSidebarVisible(true);
           }}
           className="ide-focus-ring flex items-center gap-1.5 whitespace-nowrap text-ide-text hover:text-ide-strong transition-colors"
-          title={`Git Branch: ${gitBranch} (Click to open Source Control)`}
+          title={isGitRepo ? `Git Branch: ${gitBranch} (Click to open Source Control)` : 'Source Control (No Git repository)'}
         >
-          <GitBranch className="h-3 w-3 text-ide-focus" aria-hidden="true" />
-          <span>{gitBranch}</span>
-          {changedCount > 0 && (
+          <GitBranch className={`h-3 w-3 ${isGitRepo ? 'text-ide-focus' : 'text-ide-subtle'}`} aria-hidden="true" />
+          <span>{isGitRepo ? (gitBranch || 'HEAD') : 'No Git'}</span>
+          {isGitRepo && changedCount > 0 && (
             <span className="text-ide-amber font-bold">*{changedCount}</span>
           )}
         </button>
@@ -71,10 +79,26 @@ export const StatusBar: React.FC = () => {
           <RefreshCw className="h-3 w-3" aria-hidden="true" />
           <span>Sync</span>
         </button>
-        <span className="hidden items-center gap-2 whitespace-nowrap sm:flex" aria-label="Diagnostics: zero errors and zero warnings">
-          <span>Errors 0</span>
-          <span>Warnings 0</span>
-        </span>
+        <button
+          type="button"
+          onClick={toggleProblemsPanel}
+          className={`ide-focus-ring hidden items-center gap-2 whitespace-nowrap rounded-ide-control px-1.5 py-0.5 sm:flex transition-colors ${
+            isProblemsPanelOpen
+              ? 'bg-ide-hover/80 text-ide-strong'
+              : 'text-ide-muted hover:bg-ide-hover/50 hover:text-ide-text'
+          }`}
+          title={`Problems: ${diagnosticsSummary.errorCount} error${diagnosticsSummary.errorCount === 1 ? '' : 's'}, ${diagnosticsSummary.warningCount} warning${diagnosticsSummary.warningCount === 1 ? '' : 's'} (Click to toggle Problems panel)`}
+          aria-label={`Diagnostics: ${diagnosticsSummary.errorCount} errors and ${diagnosticsSummary.warningCount} warnings`}
+        >
+          <span className={`flex items-center gap-1 ${diagnosticsSummary.errorCount > 0 ? 'text-ide-rose font-semibold' : 'text-ide-subtle'}`}>
+            <XCircle className="h-3 w-3" aria-hidden="true" />
+            <span>{diagnosticsSummary.errorCount}</span>
+          </span>
+          <span className={`flex items-center gap-1 ${diagnosticsSummary.warningCount > 0 ? 'text-ide-amber font-semibold' : 'text-ide-subtle'}`}>
+            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+            <span>{diagnosticsSummary.warningCount}</span>
+          </span>
+        </button>
         <span className="hidden items-center gap-1.5 whitespace-nowrap text-ide-amber md:flex">
           <span className="h-1.5 w-1.5 bg-ide-amber" aria-hidden="true" />
           CIA Guard Active

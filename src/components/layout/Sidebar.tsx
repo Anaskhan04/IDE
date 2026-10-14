@@ -74,8 +74,17 @@ export const Sidebar: React.FC = () => {
     pendingReconnect,
     reconnectWorkspace,
     dismissReconnect,
+    isGitRepo,
+    repoRoot,
+    workspacePath,
     gitBranch,
     stagedFileIds,
+    stagedFiles,
+    unstagedFiles,
+    gitLoading,
+    gitError,
+    refreshGitStatus,
+    initGitRepo,
     stageFile,
     unstageFile,
     stageAll,
@@ -85,12 +94,16 @@ export const Sidebar: React.FC = () => {
     commitStaged,
     diffTargetFileId,
     setDiffTargetFileId,
+    diffTargetFilePath,
+    setDiffTargetFilePath,
+    openWorkspaceByPath,
     editorSettings,
     updateEditorSettings,
     setTargetEditorLine,
     setActiveView,
     revealedExplorerFileId,
   } = useIDE();
+
 
   // Explorer states
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
@@ -478,18 +491,35 @@ export const Sidebar: React.FC = () => {
 
   const totalSearchMatches = searchResults.reduce((acc, curr) => acc + curr.lineMatches.length, 0);
 
-  // Git uncommitted changes
-  const unstagedFiles = files.filter(
-    (f) => (f.isDirty || f.isModified) && !stagedFileIds.includes(f.id)
-  );
-  const stagedFiles = files.filter((f) => stagedFileIds.includes(f.id));
+  // Active Git staged and unstaged items
+  const effectiveStaged = isGitRepo
+    ? stagedFiles
+    : files
+        .filter((f) => stagedFileIds.includes(f.id))
+        .map((f) => ({
+          path: f.path,
+          name: f.name,
+          status: 'M',
+          isStaged: true,
+        }));
 
-  const handleCommit = (e: React.FormEvent) => {
+  const effectiveUnstaged = isGitRepo
+    ? unstagedFiles
+    : files
+        .filter((f) => (f.isDirty || f.isModified) && !stagedFileIds.includes(f.id))
+        .map((f) => ({
+          path: f.path,
+          name: f.name,
+          status: 'M',
+          isStaged: false,
+        }));
+
+  const handleCommit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!commitMessage.trim() || stagedFileIds.length === 0) return;
-    const success = commitStaged(commitMessage.trim());
+    if (!commitMessage.trim() || effectiveStaged.length === 0) return;
+    const success = await commitStaged(commitMessage.trim());
     if (success) {
-      setCommitSuccessMessage(`Committed ${stagedFiles.length} file(s) locally`);
+      setCommitSuccessMessage(`Committed ${effectiveStaged.length} file(s)`);
       setCommitMessage('');
       setTimeout(() => setCommitSuccessMessage(null), 3000);
     }
@@ -850,200 +880,301 @@ export const Sidebar: React.FC = () => {
             {/* Header */}
             <div className="flex h-10 shrink-0 items-center justify-between border-b border-ide-border px-3">
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ide-muted">Source Control</span>
-              <div className="flex items-center gap-1 text-[11px] font-mono text-ide-focus">
-                <GitBranch className="h-3 w-3" />
-                <span className="truncate max-w-[110px]">{gitBranch}</span>
-              </div>
-            </div>
-
-            {/* Commit Message Box */}
-            <form onSubmit={handleCommit} className="p-2 border-b border-ide-border bg-ide-shell">
-              <textarea
-                rows={2}
-                value={commitMessage}
-                onChange={(e) => setCommitMessage(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                    handleCommit(e);
-                  }
-                }}
-                placeholder="Commit message (Ctrl+Enter to commit)"
-                className="ide-focus-ring w-full resize-none rounded-ide-control border border-ide-border-strong bg-ide-code p-1.5 font-mono text-[11px] text-ide-strong outline-none placeholder:text-ide-subtle"
-              />
-              <button
-                type="submit"
-                disabled={!commitMessage.trim() || stagedFileIds.length === 0}
-                className="ide-focus-ring mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-ide-control bg-ide-focus py-1 text-xs font-semibold text-white hover:bg-ide-focus/90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
-              >
-                <Check className="h-3.5 w-3.5" />
-                Commit ({stagedFileIds.length} staged)
-              </button>
-              {commitSuccessMessage && (
-                <div className="mt-1 text-[10px] text-ide-emerald font-mono text-center">
-                  {commitSuccessMessage}
-                </div>
-              )}
-            </form>
-
-            {/* Staged Changes Accordion */}
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="border-b border-ide-border">
-                <div className="flex items-center justify-between px-3 py-1.5 bg-ide-surface/40 text-[10px] font-semibold text-ide-muted uppercase tracking-wider">
-                  <span>Staged Changes ({stagedFiles.length})</span>
-                  {stagedFiles.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={unstageAll}
-                      className="text-ide-subtle hover:text-ide-text"
-                      title="Unstage All Changes"
-                      aria-label="Unstage All"
-                    >
-                      <Minus className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-
-                <div className="py-1">
-                  {stagedFiles.length === 0 ? (
-                    <div className="px-3 py-2 text-[10px] text-ide-subtle font-mono">No staged changes</div>
-                  ) : (
-                    stagedFiles.map((file) => (
-                      <div
-                        key={file.id}
-                        className="group flex items-center justify-between px-3 py-1 text-[11px] text-ide-text hover:bg-ide-hover/60"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setDiffTargetFileId(file.id)}
-                          className="flex min-w-0 items-center gap-1.5 truncate text-left"
-                          title={`Click to view diff for ${file.name}`}
-                        >
-                          <span className="font-mono text-ide-emerald font-bold">M</span>
-                          <span className="truncate font-mono">{file.name}</span>
-                          <span className="truncate text-[10px] text-ide-subtle font-sans">{file.path}</span>
-                        </button>
-
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            type="button"
-                            onClick={() => setDiffTargetFileId(file.id)}
-                            className="p-1 text-ide-subtle hover:text-ide-text"
-                            title="Open Diff"
-                          >
-                            <Diff className="h-3 w-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => unstageFile(file.id)}
-                            className="p-1 text-ide-subtle hover:text-ide-text"
-                            title="Unstage changes"
-                          >
-                            <Minus className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Changes (Unstaged) Accordion */}
-              <div className="border-b border-ide-border">
-                <div className="flex items-center justify-between px-3 py-1.5 bg-ide-surface/40 text-[10px] font-semibold text-ide-muted uppercase tracking-wider">
-                  <span>Changes ({unstagedFiles.length})</span>
-                  {unstagedFiles.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={stageAll}
-                      className="text-ide-subtle hover:text-ide-text"
-                      title="Stage All Changes"
-                      aria-label="Stage All"
-                    >
-                      <Plus className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-
-                <div className="py-1">
-                  {unstagedFiles.length === 0 ? (
-                    <div className="px-3 py-2 text-[10px] text-ide-subtle font-mono">Working tree clean</div>
-                  ) : (
-                    unstagedFiles.map((file) => (
-                      <div
-                        key={file.id}
-                        className="group flex items-center justify-between px-3 py-1 text-[11px] text-ide-text hover:bg-ide-hover/60"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setDiffTargetFileId(file.id)}
-                          className="flex min-w-0 items-center gap-1.5 truncate text-left"
-                          title={`Click to view diff for ${file.name}`}
-                        >
-                          <span className="font-mono text-ide-amber font-bold">M</span>
-                          <span className="truncate font-mono">{file.name}</span>
-                          <span className="truncate text-[10px] text-ide-subtle font-sans">{file.path}</span>
-                        </button>
-
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            type="button"
-                            onClick={() => setDiffTargetFileId(file.id)}
-                            className="p-1 text-ide-subtle hover:text-ide-text"
-                            title="Open Diff"
-                          >
-                            <Diff className="h-3 w-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => stageFile(file.id)}
-                            className="p-1 text-ide-subtle hover:text-ide-text"
-                            title="Stage changes"
-                          >
-                            <Plus className="h-3 w-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (window.confirm(`Discard changes in ${file.name}?`)) {
-                                discardChanges(file.id);
-                              }
-                            }}
-                            className="p-1 text-ide-subtle hover:text-ide-rose"
-                            title="Discard changes"
-                          >
-                            <Undo2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Recent Commits List */}
-              <div className="p-2">
-                <div className="px-1 py-1 text-[10px] font-semibold text-ide-muted uppercase tracking-wider">
-                  Recent Commits ({gitCommits.length})
-                </div>
-                <div className="mt-1 space-y-1">
-                  {gitCommits.map((c) => (
-                    <div
-                      key={c.hash}
-                      className="p-2 rounded-sm border border-ide-border bg-ide-panel/60 text-xs font-mono space-y-1 hover:border-ide-border-strong transition-colors"
-                    >
-                      <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-ide-focus font-bold">{c.hash}</span>
-                        <span className="text-ide-subtle">{c.time}</span>
-                      </div>
-                      <div className="text-ide-text truncate font-sans text-[11px]">{c.message}</div>
-                      <div className="text-[10px] text-ide-subtle">{c.author}</div>
+              <div className="flex items-center gap-1.5 text-[11px] font-mono">
+                {isGitRepo ? (
+                  <>
+                    <div className="flex items-center gap-1 text-ide-focus">
+                      <GitBranch className="h-3 w-3" />
+                      <span className="truncate max-w-[95px]" title={`Branch: ${gitBranch || 'HEAD'}`}>{gitBranch || 'HEAD'}</span>
                     </div>
-                  ))}
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => refreshGitStatus()}
+                      className="ide-focus-ring p-1 text-ide-muted hover:text-ide-text rounded"
+                      title="Refresh Git status"
+                      disabled={gitLoading}
+                    >
+                      <RotateCcw className={`h-3 w-3 ${gitLoading ? 'animate-spin text-ide-focus' : ''}`} />
+                    </button>
+                  </>
+                ) : isGitRepo === false ? (
+                  <span className="text-ide-subtle text-[10px]">No Git Repo</span>
+                ) : (
+                  <span className="text-ide-subtle text-[10px]">{gitLoading ? 'Checking...' : 'Idle'}</span>
+                )}
               </div>
             </div>
+
+            {/* Git Error Notice */}
+            {gitError && (
+              <div className="p-2 border-b border-ide-rose/30 bg-ide-rose/10 text-xs shrink-0">
+                <div className="flex items-start gap-1.5">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0 text-ide-rose mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-ide-rose text-[11px]">Git Error</div>
+                    <div className="text-[10px] text-ide-muted font-mono break-words mt-0.5">{gitError}</div>
+                    <button
+                      type="button"
+                      onClick={() => refreshGitStatus()}
+                      className="mt-1 text-[10px] text-ide-focus hover:underline font-mono"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Empty State: Not a Git Repository (Requirement 3) */}
+            {isGitRepo === false ? (
+              <div className="flex-1 p-4 flex flex-col items-center justify-center text-center">
+                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-ide-surface border border-ide-border mb-3">
+                  <GitBranch className="h-5 w-5 text-ide-subtle" />
+                </div>
+                <div className="text-xs font-semibold text-ide-strong">No Git repository found</div>
+                <p className="mt-1.5 text-[11px] text-ide-muted leading-relaxed max-w-[210px]">
+                  The currently opened workspace is not managed by Git.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => initGitRepo()}
+                  disabled={gitLoading}
+                  className="ide-focus-ring mt-4 flex items-center justify-center gap-1.5 rounded-ide-control bg-ide-focus px-3 py-1.5 text-xs font-semibold text-white hover:bg-ide-focus/90 disabled:opacity-50 transition-opacity"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Initialize Repository
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const p = window.prompt('Enter path to open a Git repository (e.g. C:\\Users\\ASUS\\Downloads\\Anas\\vs code\\INTERNSHIP\\HRFlow):', workspacePath || '');
+                    if (p) openWorkspaceByPath(p);
+                  }}
+                  className="mt-3 text-[10px] text-ide-focus hover:underline font-sans"
+                >
+                  Open repository by path...
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* Commit Message Box */}
+                <form onSubmit={handleCommit} className="p-2 border-b border-ide-border bg-ide-shell shrink-0">
+                  <textarea
+                    rows={2}
+                    value={commitMessage}
+                    onChange={(e) => setCommitMessage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                        handleCommit(e);
+                      }
+                    }}
+                    placeholder="Commit message (Ctrl+Enter to commit)"
+                    className="ide-focus-ring w-full resize-none rounded-ide-control border border-ide-border-strong bg-ide-code p-1.5 font-mono text-[11px] text-ide-strong outline-none placeholder:text-ide-subtle"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!commitMessage.trim() || effectiveStaged.length === 0 || gitLoading}
+                    className="ide-focus-ring mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-ide-control bg-ide-focus py-1 text-xs font-semibold text-white hover:bg-ide-focus/90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    Commit ({effectiveStaged.length} staged)
+                  </button>
+                  {commitSuccessMessage && (
+                    <div className="mt-1 text-[10px] text-ide-emerald font-mono text-center">
+                      {commitSuccessMessage}
+                    </div>
+                  )}
+                </form>
+
+                {/* Changes List */}
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  {/* Staged Changes Accordion */}
+                  <div className="border-b border-ide-border">
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-ide-surface/40 text-[10px] font-semibold text-ide-muted uppercase tracking-wider">
+                      <span>Staged Changes ({effectiveStaged.length})</span>
+                      {effectiveStaged.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={unstageAll}
+                          className="text-ide-subtle hover:text-ide-text"
+                          title="Unstage All Changes"
+                          aria-label="Unstage All"
+                        >
+                          <Minus className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="py-1">
+                      {effectiveStaged.length === 0 ? (
+                        <div className="px-3 py-2 text-[10px] text-ide-subtle font-mono">No staged changes</div>
+                      ) : (
+                        effectiveStaged.map((file) => (
+                          <div
+                            key={file.path}
+                            className="group flex items-center justify-between px-3 py-1 text-[11px] text-ide-text hover:bg-ide-hover/60"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDiffTargetFilePath(file.path);
+                                const match = files.find(f => f.path === file.path);
+                                if (match) setDiffTargetFileId(match.id);
+                              }}
+                              className="flex min-w-0 items-center gap-1.5 truncate text-left"
+                              title={`Click to view diff for ${file.name}`}
+                            >
+                              <span className="font-mono text-ide-emerald font-bold">
+                                {file.status || 'M'}
+                              </span>
+                              <span className="truncate font-mono">{file.name}</span>
+                              <span className="truncate text-[10px] text-ide-subtle font-sans">{file.path}</span>
+                            </button>
+
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDiffTargetFilePath(file.path);
+                                  const match = files.find(f => f.path === file.path);
+                                  if (match) setDiffTargetFileId(match.id);
+                                }}
+                                className="p-1 text-ide-subtle hover:text-ide-text"
+                                title="Open Diff"
+                              >
+                                <Diff className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => unstageFile(file.path)}
+                                className="p-1 text-ide-subtle hover:text-ide-text"
+                                title="Unstage changes"
+                              >
+                                <Minus className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Changes (Unstaged) Accordion */}
+                  <div className="border-b border-ide-border">
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-ide-surface/40 text-[10px] font-semibold text-ide-muted uppercase tracking-wider">
+                      <span>Changes ({effectiveUnstaged.length})</span>
+                      {effectiveUnstaged.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={stageAll}
+                          className="text-ide-subtle hover:text-ide-text"
+                          title="Stage All Changes"
+                          aria-label="Stage All"
+                        >
+                          <Plus className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="py-1">
+                      {effectiveUnstaged.length === 0 ? (
+                        <div className="px-3 py-2 text-[10px] text-ide-subtle font-mono">Working tree clean</div>
+                      ) : (
+                        effectiveUnstaged.map((file) => (
+                          <div
+                            key={file.path}
+                            className="group flex items-center justify-between px-3 py-1 text-[11px] text-ide-text hover:bg-ide-hover/60"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDiffTargetFilePath(file.path);
+                                const match = files.find(f => f.path === file.path);
+                                if (match) setDiffTargetFileId(match.id);
+                              }}
+                              className="flex min-w-0 items-center gap-1.5 truncate text-left"
+                              title={`Click to view diff for ${file.name}`}
+                            >
+                              <span className={`font-mono font-bold ${file.status === 'U' || file.status === '??' ? 'text-ide-cyan' : file.status === 'D' ? 'text-ide-rose' : 'text-ide-amber'}`}>
+                                {file.status || 'M'}
+                              </span>
+                              <span className="truncate font-mono">{file.name}</span>
+                              <span className="truncate text-[10px] text-ide-subtle font-sans">{file.path}</span>
+                            </button>
+
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDiffTargetFilePath(file.path);
+                                  const match = files.find(f => f.path === file.path);
+                                  if (match) setDiffTargetFileId(match.id);
+                                }}
+                                className="p-1 text-ide-subtle hover:text-ide-text"
+                                title="Open Diff"
+                              >
+                                <Diff className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => stageFile(file.path)}
+                                className="p-1 text-ide-subtle hover:text-ide-text"
+                                title="Stage changes"
+                              >
+                                <Plus className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (window.confirm(`Discard changes in ${file.name}?`)) {
+                                    discardChanges(file.path);
+                                  }
+                                }}
+                                className="p-1 text-ide-subtle hover:text-ide-rose"
+                                title="Discard changes"
+                              >
+                                <Undo2 className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Recent Commits List */}
+                  <div className="p-2">
+                    <div className="px-1 py-1 text-[10px] font-semibold text-ide-muted uppercase tracking-wider">
+                      Recent Commits ({gitCommits.length})
+                    </div>
+                    <div className="mt-1 space-y-1">
+                      {gitCommits.length === 0 ? (
+                        <div className="px-1 py-2 text-[10px] text-ide-subtle font-mono">
+                          No commits yet in this repository
+                        </div>
+                      ) : (
+                        gitCommits.map((c) => (
+                          <div
+                            key={c.hash}
+                            className="p-2 rounded-sm border border-ide-border bg-ide-panel/60 text-xs font-mono space-y-1 hover:border-ide-border-strong transition-colors"
+                          >
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-ide-focus font-bold">{c.hash}</span>
+                              <span className="text-ide-subtle">{c.time}</span>
+                            </div>
+                            <div className="text-ide-text truncate font-sans text-[11px]">{c.message}</div>
+                            <div className="text-[10px] text-ide-subtle">{c.author}</div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
+
 
         {/* 4. SETTINGS VIEW */}
         {sidebarView === 'settings' && (
@@ -1224,12 +1355,17 @@ export const Sidebar: React.FC = () => {
       </aside>
 
       {/* Git Diff Modal Viewer */}
-      {diffTargetFileId && (
+      {(diffTargetFileId || diffTargetFilePath) && (
         <GitDiffModal
           fileId={diffTargetFileId}
-          onClose={() => setDiffTargetFileId(null)}
+          filePath={diffTargetFilePath}
+          onClose={() => {
+            setDiffTargetFileId(null);
+            setDiffTargetFilePath(null);
+          }}
         />
       )}
+
     </>
   );
 };

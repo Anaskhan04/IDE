@@ -4,6 +4,8 @@ import {
   SidebarView,
   EditorSettings,
   GitCommit,
+  GitFileItem,
+  GitRepoStatus,
   ProjectFile, 
   GraphNode, 
   GraphEdge, 
@@ -14,8 +16,12 @@ import {
   TestSuite, 
   EvaluationExperiment,
   CypherQueryResult,
-  TracePathResult
+  TracePathResult,
+  WorkspaceDiagnostic,
+  DiagnosticsSummary
 } from '../types/ide';
+import { gitService } from '../utils/gitService';
+
 import { INITIAL_FILES } from '../data/mockProject';
 import { INITIAL_GRAPH_NODES, INITIAL_GRAPH_EDGES, DEFAULT_CIA_RESULT, SAMPLE_CYPHER_QUERIES } from '../data/mockGraph';
 import { 
@@ -31,6 +37,11 @@ import { INITIAL_TEST_SUITES } from '../data/mockTests';
 import { EVALUATION_EXPERIMENTS } from '../data/mockBenchmarks';
 import { INITIAL_MASTER_PROMPT, MasterPromptData } from '../data/mockMasterPrompt';
 import { buildGraphFromFiles } from '../utils/astParser';
+import { 
+  analyzeWorkspaceDiagnostics, 
+  getDiagnosticsSummary, 
+  getUnsupportedWorkspaceFiles 
+} from '../utils/diagnosticsEngine';
 import { 
   hasFsAccess, 
   writeFileHandle, 
@@ -139,18 +150,30 @@ interface IDEContextType {
   setIsSettingsOpen: (open: boolean) => void;
 
   // Git / Local Source Control
+  isGitRepo: boolean | null;
+  repoRoot: string | null;
+  workspacePath: string | null;
   gitBranch: string;
   setGitBranch: (branch: string) => void;
   stagedFileIds: string[];
-  stageFile: (fileId: string) => void;
-  unstageFile: (fileId: string) => void;
-  stageAll: () => void;
-  unstageAll: () => void;
-  discardChanges: (fileId: string) => void;
+  stagedFiles: GitFileItem[];
+  unstagedFiles: GitFileItem[];
   gitCommits: GitCommit[];
-  commitStaged: (message: string) => boolean;
+  gitLoading: boolean;
+  gitError: string | null;
+  stageFile: (filePathOrId: string) => Promise<void>;
+  unstageFile: (filePathOrId: string) => Promise<void>;
+  stageAll: () => Promise<void>;
+  unstageAll: () => Promise<void>;
+  discardChanges: (filePathOrId: string) => Promise<void>;
+  commitStaged: (message: string) => Promise<boolean>;
+  refreshGitStatus: (overrideRepoRoot?: string) => Promise<void>;
+  initGitRepo: () => Promise<boolean>;
   diffTargetFileId: string | null;
   setDiffTargetFileId: (fileId: string | null) => void;
+  diffTargetFilePath: string | null;
+  setDiffTargetFilePath: (path: string | null) => void;
+  openWorkspaceByPath: (path: string) => Promise<boolean>;
 
   // Editor Preferences & Quick Operations
   editorSettings: EditorSettings;
@@ -162,17 +185,15 @@ interface IDEContextType {
   // Explorer Sync from Knowledge Graph / Symbol Navigation
   revealedExplorerFileId: string | null;
   revealFileInExplorer: (fileId: string) => void;
-}
 
-const INITIAL_GIT_COMMITS: GitCommit[] = [
-  { hash: 'b797a13', message: 'feat: enhance knowledge graph canvas, AST parser relations, and editor layout', author: 'Anas khan', time: '15 minutes ago', filesCount: 7 },
-  { hash: '7c1838c', message: 'feat: implement full filesystem operations, session reconnect, and workspace persistence', author: 'Anas khan', time: '3 hours ago', filesCount: 6 },
-  { hash: '271c688', message: 'fix: track saved baseline to accurately reflect unsaved changes', author: 'Anas khan', time: '4 hours ago', filesCount: 4 },
-  { hash: '2396bb8', message: 'feat: update UI and establish design system', author: 'Anas khan', time: '3 weeks ago', filesCount: 12 },
-  { hash: 'c01b7ac', message: 'feat: start with clean empty workspace and clear pre-added files', author: 'Nitin Kumar Singh', time: '4 weeks ago', filesCount: 5 },
-  { hash: '256659f', message: 'feat: implement Stitch IntelliCode IDE UI clone with clean layout', author: 'Nitin Kumar Singh', time: '4 weeks ago', filesCount: 18 },
-  { hash: '1695aa2', message: 'initial commit', author: 'Nitin Kumar Singh', time: '4 weeks ago', filesCount: 22 },
-];
+  // Diagnostics & Problems Panel
+  diagnostics: WorkspaceDiagnostic[];
+  diagnosticsSummary: DiagnosticsSummary;
+  unsupportedFiles: { fileId: string; filePath: string; fileName: string; reason: string }[];
+  isProblemsPanelOpen: boolean;
+  setIsProblemsPanelOpen: (open: boolean) => void;
+  toggleProblemsPanel: () => void;
+}
 
 const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   fontSize: 12,
@@ -195,11 +216,20 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
 
-  // Git state
-  const [gitBranch, setGitBranch] = useState<string>('anas-workspace-v1');
+  // Real Git state (Requirement 2 & 3: Never hardcode repository commits or branch)
+  const [isGitRepo, setIsGitRepo] = useState<boolean | null>(null);
+  const [repoRoot, setRepoRoot] = useState<string | null>(null);
+  const [workspacePath, setWorkspacePath] = useState<string | null>(null);
+  const [gitBranch, setGitBranch] = useState<string>('');
+  const [stagedFiles, setStagedFiles] = useState<GitFileItem[]>([]);
+  const [unstagedFiles, setUnstagedFiles] = useState<GitFileItem[]>([]);
   const [stagedFileIds, setStagedFileIds] = useState<string[]>([]);
-  const [gitCommits, setGitCommits] = useState<GitCommit[]>(INITIAL_GIT_COMMITS);
+  const [gitCommits, setGitCommits] = useState<GitCommit[]>([]);
+  const [gitLoading, setGitLoading] = useState<boolean>(false);
+  const [gitError, setGitError] = useState<string | null>(null);
   const [diffTargetFileId, setDiffTargetFileId] = useState<string | null>(null);
+  const [diffTargetFilePath, setDiffTargetFilePath] = useState<string | null>(null);
+
 
   // Editor settings & navigation
   const [targetEditorLine, setTargetEditorLine] = useState<number | null>(null);
@@ -271,6 +301,38 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [pendingReconnect, setPendingReconnect] = useState<PendingReconnect | null>(null);
   const directoryHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
   const clearSaveError = () => setSaveError(null);
+
+  // Diagnostics & Problems Panel
+  const [diagnostics, setDiagnostics] = useState<WorkspaceDiagnostic[]>([]);
+  const [isProblemsPanelOpen, setIsProblemsPanelOpen] = useState<boolean>(false);
+  const toggleProblemsPanel = () => setIsProblemsPanelOpen((prev) => !prev);
+
+  const diagnosticsSummary = React.useMemo(() => {
+    return getDiagnosticsSummary(diagnostics, files);
+  }, [diagnostics, files]);
+
+  const unsupportedFiles = React.useMemo(() => {
+    return getUnsupportedWorkspaceFiles(files);
+  }, [files]);
+
+  // Debounced diagnostic computation when workspace files change (Requirement 5)
+  useEffect(() => {
+    if (files.length === 0) {
+      setDiagnostics([]);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      try {
+        const diags = analyzeWorkspaceDiagnostics(files);
+        setDiagnostics(diags);
+      } catch (err) {
+        console.warn('Diagnostics analysis failed:', err);
+      }
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [files]);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -411,6 +473,9 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try {
         await writeFileHandle(file.fileHandle, file.content);
         setFiles(prev => applyUpdatedAst(prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content } : f)));
+        if (isGitRepo && repoRoot) {
+          refreshGitStatus();
+        }
         return;
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -426,8 +491,12 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const handle = await createFileInDirectory(directoryHandleRef.current, file.path, file.content);
         if (handle) {
           setFiles(prev => applyUpdatedAst(prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content, fileHandle: handle } : f)));
+          if (isGitRepo && repoRoot) {
+            refreshGitStatus();
+          }
           return;
         } else {
+
           setSaveError(`Failed to write "${file.name}" to directory.`);
           return;
         }
@@ -602,15 +671,71 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return true;
   };
 
+  const refreshGitStatus = async (overrideRepoRoot?: string) => {
+    const root = overrideRepoRoot || repoRoot;
+    if (!root) return;
+
+    setGitLoading(true);
+    setGitError(null);
+    try {
+      const statusRes = await gitService.getStatus(root, workspacePath || undefined);
+      if (statusRes.success) {
+        setIsGitRepo(statusRes.isGit);
+        if (statusRes.isGit) {
+          if (statusRes.branch) setGitBranch(statusRes.branch);
+          setStagedFiles(statusRes.stagedFiles || []);
+          setUnstagedFiles(statusRes.unstagedFiles || []);
+
+          // Sync stagedFileIds for in-memory files matching staged paths
+          const stagedPaths = (statusRes.stagedFiles || []).map(f => f.path);
+          setStagedFileIds(files.filter(f => stagedPaths.includes(f.path)).map(f => f.id));
+
+          // Fetch genuine repository commits
+          const logRes = await gitService.getLog(root, 25);
+          if (logRes.success) {
+            setGitCommits(logRes.commits || []);
+          } else if (logRes.error) {
+            setGitCommits([]);
+          }
+        } else {
+          setStagedFiles([]);
+          setUnstagedFiles([]);
+          setGitCommits([]);
+          setGitBranch('');
+        }
+      } else if (statusRes.error) {
+        setGitError(statusRes.error);
+      }
+    } catch (err: any) {
+      setGitError(err?.message || 'Failed to refresh Git status');
+    } finally {
+      setGitLoading(false);
+    }
+  };
+
   const loadExternalFiles = (
     newFiles: ProjectFile[], 
     folderName?: string, 
-    dirHandle?: FileSystemDirectoryHandle
+    dirHandle?: FileSystemDirectoryHandle,
+    explicitPath?: string
   ) => {
     if (newFiles.length === 0) return;
     directoryHandleRef.current = dirHandle || null;
     setPendingReconnect(null);
     setSaveError(null);
+
+    // CRITICAL (Requirement 2 & 3): Never reuse stale Git data from a previously opened workspace!
+    setIsGitRepo(null);
+    setRepoRoot(null);
+    setWorkspacePath(explicitPath || null);
+    setGitBranch('');
+    setGitCommits([]);
+    setStagedFiles([]);
+    setUnstagedFiles([]);
+    setStagedFileIds([]);
+    setGitError(null);
+    setDiffTargetFileId(null);
+    setDiffTargetFilePath(null);
 
     // Normalize paths: ensure forward slashes and strip redundant shared root folder prefixes
     // (e.g. when loaded via folder input where webkitRelativePath starts with FolderName/)
@@ -652,14 +777,72 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     if (dirHandle) {
       saveStoredDirectoryHandle(dirHandle, resolvedFolderName);
-      saveWorkspaceMeta({
-        projectId: 'custom',
-        folderName: resolvedFolderName,
-        activeFilePath: initializedFiles[0].path,
-        openFilePaths: [initializedFiles[0].path],
-        lastSavedAt: Date.now()
-      });
     }
+
+    // Persist initial workspace metadata
+    saveWorkspaceMeta({
+      projectId: 'custom',
+      folderName: resolvedFolderName,
+      workspacePath: explicitPath,
+      activeFilePath: initializedFiles[0].path,
+      openFilePaths: [initializedFiles[0].path],
+      lastSavedAt: Date.now()
+    });
+
+    // Detect Git repository for the newly opened workspace directory
+    const sampleFiles = initializedFiles.slice(0, 10).map(f => f.path);
+    setGitLoading(true);
+    gitService.resolveWorkspace({
+      path: explicitPath,
+      folderName: resolvedFolderName,
+      sampleFiles,
+    }).then(async (resolved) => {
+      if (resolved.success && resolved.workspacePath) {
+        setWorkspacePath(resolved.workspacePath);
+        setIsGitRepo(resolved.isGit);
+
+        // Update workspace metadata with exact resolved path and repo root
+        saveWorkspaceMeta({
+          projectId: 'custom',
+          folderName: resolvedFolderName,
+          workspacePath: resolved.workspacePath,
+          repoRoot: resolved.repoRoot,
+          activeFilePath: initializedFiles[0].path,
+          openFilePaths: [initializedFiles[0].path],
+          lastSavedAt: Date.now()
+        });
+
+        if (resolved.isGit && resolved.repoRoot) {
+          setRepoRoot(resolved.repoRoot);
+          setGitBranch(resolved.branch || 'main');
+          await refreshGitStatus(resolved.repoRoot);
+        } else {
+          // Explicitly not a git repository
+          setIsGitRepo(false);
+          setRepoRoot(null);
+          setGitBranch('');
+          setGitCommits([]);
+          setStagedFiles([]);
+          setUnstagedFiles([]);
+        }
+      } else {
+        // Directory could not be located on host or is not a git repo
+        setIsGitRepo(false);
+        setRepoRoot(null);
+        setGitBranch('');
+        setGitCommits([]);
+        setStagedFiles([]);
+        setUnstagedFiles([]);
+      }
+    }).catch(err => {
+      console.warn('Git resolution error:', err);
+      setIsGitRepo(false);
+      setRepoRoot(null);
+      setGitBranch('');
+      setGitCommits([]);
+    }).finally(() => {
+      setGitLoading(false);
+    });
 
     // Generate dynamic Knowledge Graph and real symbols from actual loaded files!
     try {
@@ -697,75 +880,214 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const openWorkspaceByPath = async (dirPath: string): Promise<boolean> => {
+    const cleanPath = dirPath.trim();
+    if (!cleanPath) return false;
+    setGitLoading(true);
+    setGitError(null);
+    try {
+      const folderRes = await gitService.readWorkspaceFolder(cleanPath);
+      if (!folderRes.success || !folderRes.files || folderRes.files.length === 0) {
+        setSaveError(folderRes.error || `Could not open folder "${cleanPath}"`);
+        setGitLoading(false);
+        return false;
+      }
+      loadExternalFiles(folderRes.files, folderRes.folderName, undefined, folderRes.workspacePath);
+      return true;
+    } catch (err: any) {
+      setSaveError(err?.message || `Failed to open "${cleanPath}"`);
+      setGitLoading(false);
+      return false;
+    }
+  };
+
   const saveAllFiles = async (): Promise<void> => {
     const dirtyFiles = files.filter(f => f.isDirty);
     for (const f of dirtyFiles) {
       await saveFile(f.id);
     }
-  };
-
-  const stageFile = (fileId: string) => {
-    setStagedFileIds(prev => prev.includes(fileId) ? prev : [...prev, fileId]);
-  };
-
-  const unstageFile = (fileId: string) => {
-    setStagedFileIds(prev => prev.filter(id => id !== fileId));
-  };
-
-  const stageAll = () => {
-    const changed = files.filter(f => f.isDirty || f.isModified).map(f => f.id);
-    setStagedFileIds(changed);
-  };
-
-  const unstageAll = () => {
-    setStagedFileIds([]);
-  };
-
-  const discardChanges = (fileId: string) => {
-    setFiles(prev => prev.map(f => {
-      if (f.id !== fileId) return f;
-      const original = f.savedContent !== undefined ? f.savedContent : f.content;
-      return {
-        ...f,
-        content: original,
-        isDirty: false,
-        isModified: false
-      };
-    }));
-    setStagedFileIds(prev => prev.filter(id => id !== fileId));
-    if (diffTargetFileId === fileId) {
-      setDiffTargetFileId(null);
+    if (isGitRepo && repoRoot) {
+      await refreshGitStatus();
     }
   };
 
-  const commitStaged = (message: string): boolean => {
-    const trimmed = message.trim();
-    if (!trimmed || stagedFileIds.length === 0) return false;
+  const stageFile = async (filePathOrId: string): Promise<void> => {
+    const file = files.find(f => f.id === filePathOrId);
+    const targetPath = file ? file.path : filePathOrId;
 
-    setFiles(prev => prev.map(f => {
-      if (stagedFileIds.includes(f.id)) {
+    if (isGitRepo && repoRoot) {
+      setGitLoading(true);
+      const res = await gitService.stage(repoRoot, [targetPath]);
+      if (!res.success && res.error) {
+        setGitError(res.error);
+      }
+      await refreshGitStatus();
+    } else {
+      setStagedFileIds(prev => prev.includes(filePathOrId) ? prev : [...prev, filePathOrId]);
+    }
+  };
+
+  const unstageFile = async (filePathOrId: string): Promise<void> => {
+    const file = files.find(f => f.id === filePathOrId);
+    const targetPath = file ? file.path : filePathOrId;
+
+    if (isGitRepo && repoRoot) {
+      setGitLoading(true);
+      const res = await gitService.unstage(repoRoot, [targetPath]);
+      if (!res.success && res.error) {
+        setGitError(res.error);
+      }
+      await refreshGitStatus();
+    } else {
+      setStagedFileIds(prev => prev.filter(id => id !== filePathOrId));
+    }
+  };
+
+  const stageAll = async (): Promise<void> => {
+    if (isGitRepo && repoRoot) {
+      setGitLoading(true);
+      const res = await gitService.stage(repoRoot, undefined, true);
+      if (!res.success && res.error) {
+        setGitError(res.error);
+      }
+      await refreshGitStatus();
+    } else {
+      const changed = files.filter(f => f.isDirty || f.isModified).map(f => f.id);
+      setStagedFileIds(changed);
+    }
+  };
+
+  const unstageAll = async (): Promise<void> => {
+    if (isGitRepo && repoRoot) {
+      setGitLoading(true);
+      const res = await gitService.unstage(repoRoot, undefined, true);
+      if (!res.success && res.error) {
+        setGitError(res.error);
+      }
+      await refreshGitStatus();
+    } else {
+      setStagedFileIds([]);
+    }
+  };
+
+  const discardChanges = async (filePathOrId: string): Promise<void> => {
+    const file = files.find(f => f.id === filePathOrId);
+    const targetPath = file ? file.path : filePathOrId;
+
+    if (isGitRepo && repoRoot) {
+      setGitLoading(true);
+      const res = await gitService.discard(repoRoot, targetPath);
+      if (!res.success && res.error) {
+        setGitError(res.error);
+      }
+      // Re-read file content from disk to update editor
+      if (file) {
+        const diffRes = await gitService.getDiff(repoRoot, targetPath);
+        if (diffRes.success && diffRes.currentContent !== undefined) {
+          setFiles(prev => prev.map(f => f.id === file.id ? {
+            ...f,
+            content: diffRes.currentContent!,
+            savedContent: diffRes.currentContent!,
+            isDirty: false,
+            isModified: false
+          } : f));
+        }
+      }
+      await refreshGitStatus();
+    } else if (file) {
+      setFiles(prev => prev.map(f => {
+        if (f.id !== file.id) return f;
+        const original = f.savedContent !== undefined ? f.savedContent : f.content;
         return {
           ...f,
-          savedContent: f.content,
+          content: original,
           isDirty: false,
           isModified: false
         };
-      }
-      return f;
-    }));
-
-    const newCommit: GitCommit = {
-      hash: Math.random().toString(16).substring(2, 9),
-      message: trimmed,
-      author: 'Anas khan',
-      time: 'Just now',
-      filesCount: stagedFileIds.length
-    };
-
-    setGitCommits(prev => [newCommit, ...prev]);
-    setStagedFileIds([]);
-    return true;
+      }));
+      setStagedFileIds(prev => prev.filter(id => id !== file.id));
+    }
+    if (diffTargetFileId === filePathOrId || diffTargetFilePath === targetPath) {
+      setDiffTargetFileId(null);
+      setDiffTargetFilePath(null);
+    }
   };
+
+  const commitStaged = async (message: string): Promise<boolean> => {
+    const trimmed = message.trim();
+    if (!trimmed) return false;
+
+    if (isGitRepo && repoRoot) {
+      setGitLoading(true);
+      setGitError(null);
+      const res = await gitService.commit(repoRoot, trimmed);
+      if (!res.success) {
+        setGitError(res.error || 'Failed to commit');
+        setGitLoading(false);
+        return false;
+      }
+      // Mark committed files in memory as saved
+      setFiles(prev => prev.map(f => {
+        const wasStaged = stagedFiles.some(sf => sf.path === f.path);
+        if (wasStaged) {
+          return {
+            ...f,
+            savedContent: f.content,
+            isDirty: false,
+            isModified: false
+          };
+        }
+        return f;
+      }));
+      await refreshGitStatus();
+      return true;
+    } else {
+      // In-memory fallback
+      if (stagedFileIds.length === 0) return false;
+      setFiles(prev => prev.map(f => {
+        if (stagedFileIds.includes(f.id)) {
+          return {
+            ...f,
+            savedContent: f.content,
+            isDirty: false,
+            isModified: false
+          };
+        }
+        return f;
+      }));
+      const newCommit: GitCommit = {
+        hash: Math.random().toString(16).substring(2, 9),
+        message: trimmed,
+        author: 'Local User',
+        time: 'Just now',
+        filesCount: stagedFileIds.length
+      };
+      setGitCommits(prev => [newCommit, ...prev]);
+      setStagedFileIds([]);
+      return true;
+    }
+  };
+
+  const initGitRepo = async (): Promise<boolean> => {
+    const targetDir = workspacePath || (directoryHandleRef.current ? directoryHandleRef.current.name : null);
+    if (!targetDir) return false;
+
+    setGitLoading(true);
+    setGitError(null);
+    const res = await gitService.initRepo(targetDir);
+    if (res.success && res.repoRoot) {
+      setRepoRoot(res.repoRoot);
+      setIsGitRepo(true);
+      setGitBranch(res.branch || 'main');
+      await refreshGitStatus(res.repoRoot);
+      return true;
+    } else {
+      setGitError(res.error || 'Failed to initialize Git repository');
+      setGitLoading(false);
+      return false;
+    }
+  };
+
 
   // Protect unsaved changes before page reload or navigation
   useEffect(() => {
@@ -871,6 +1193,41 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               } catch (e) {
                 console.error('Failed to parse graph from restored files', e);
               }
+
+              // Resolve Git repository for restored workspace
+              gitService.resolveWorkspace({
+                path: meta?.workspacePath,
+                folderName: stored.folderName,
+                sampleFiles: loadedFiles.slice(0, 10).map(f => f.path),
+              }).then(async (resolved) => {
+                if (isCancelled) return;
+                if (resolved.success && resolved.workspacePath) {
+                  setWorkspacePath(resolved.workspacePath);
+                  setIsGitRepo(resolved.isGit);
+                  if (resolved.isGit && resolved.repoRoot) {
+                    setRepoRoot(resolved.repoRoot);
+                    setGitBranch(resolved.branch || 'main');
+                    await refreshGitStatus(resolved.repoRoot);
+                  } else {
+                    setIsGitRepo(false);
+                    setRepoRoot(null);
+                    setGitBranch('');
+                    setGitCommits([]);
+                  }
+                } else {
+                  setIsGitRepo(false);
+                  setRepoRoot(null);
+                  setGitBranch('');
+                  setGitCommits([]);
+                }
+              }).catch(() => {
+                if (!isCancelled) {
+                  setIsGitRepo(false);
+                  setRepoRoot(null);
+                  setGitBranch('');
+                  setGitCommits([]);
+                }
+              });
             }
           } catch (readErr) {
             console.warn('Could not read directory from stored handle:', readErr);
@@ -1315,25 +1672,43 @@ Using persistent Knowledge Graph for **${masterPrompt.projectName}**:
         setIsCommandPaletteOpen,
         isSettingsOpen,
         setIsSettingsOpen,
+        isGitRepo,
+        repoRoot,
+        workspacePath,
         gitBranch,
         setGitBranch,
         stagedFileIds,
+        stagedFiles,
+        unstagedFiles,
+        gitCommits,
+        gitLoading,
+        gitError,
         stageFile,
         unstageFile,
         stageAll,
         unstageAll,
         discardChanges,
-        gitCommits,
         commitStaged,
+        refreshGitStatus,
+        initGitRepo,
         diffTargetFileId,
         setDiffTargetFileId,
+        diffTargetFilePath,
+        setDiffTargetFilePath,
+        openWorkspaceByPath,
         editorSettings,
         updateEditorSettings,
         targetEditorLine,
         setTargetEditorLine,
         saveAllFiles,
         revealedExplorerFileId,
-        revealFileInExplorer
+        revealFileInExplorer,
+        diagnostics,
+        diagnosticsSummary,
+        unsupportedFiles,
+        isProblemsPanelOpen,
+        setIsProblemsPanelOpen,
+        toggleProblemsPanel
       }}
     >
       {children}
