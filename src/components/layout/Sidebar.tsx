@@ -89,6 +89,7 @@ export const Sidebar: React.FC = () => {
     updateEditorSettings,
     setTargetEditorLine,
     setActiveView,
+    revealedExplorerFileId,
   } = useIDE();
 
   // Explorer states
@@ -124,6 +125,39 @@ export const Sidebar: React.FC = () => {
   useEffect(() => {
     setCollapsedFolders(new Set());
   }, [masterPrompt.projectName]);
+
+  // Reveal file in Explorer: expand parent folders and scroll into view
+  useEffect(() => {
+    const targetId = revealedExplorerFileId || activeFileId;
+    if (!targetId) return;
+    const targetFile = files.find((f) => f.id === targetId);
+    if (!targetFile) return;
+
+    const parts = targetFile.path.replace(/\\/g, '/').split('/').filter(Boolean);
+    if (parts.length > 1) {
+      setCollapsedFolders((prev) => {
+        let changed = false;
+        const next = new Set(prev);
+        for (let i = 1; i < parts.length; i++) {
+          const parentFolder = parts.slice(0, i).join('/');
+          if (next.has(parentFolder)) {
+            next.delete(parentFolder);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
+
+    const timer = setTimeout(() => {
+      const el = document.getElementById(`explorer-file-${targetId}`);
+      if (el) {
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }, 60);
+
+    return () => clearTimeout(timer);
+  }, [revealedExplorerFileId, activeFileId, files]);
 
   // Build tree for explorer
   const fileTree: FileTreeNode = { name: 'root', fullPath: '', isFolder: true, children: {} };
@@ -320,12 +354,13 @@ export const Sidebar: React.FC = () => {
       }
 
       const file = child.file!;
-      const isActive = file.id === activeFileId;
+      const isActive = file.id === (revealedExplorerFileId || activeFileId);
       const isRenaming = renamingFileId === file.id;
 
       return (
         <div
           key={file.id}
+          id={`explorer-file-${file.id}`}
           role="treeitem"
           className={`group flex min-h-[26px] items-center border-l-2 ${isActive ? 'border-ide-focus bg-ide-selected text-ide-strong' : 'border-transparent text-ide-muted hover:bg-ide-hover/60'}`}
           style={{ paddingLeft: `${18 + depth * 12}px` }}

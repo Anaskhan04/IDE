@@ -19,7 +19,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
-import type { GraphNode } from '../../types/ide';
+import type { GraphNode, ProjectFile, SymbolInfo } from '../../types/ide';
 import { SAMPLE_CYPHER_QUERIES } from '../../data/mockGraph';
 import { detectArchitectureArea, isGeneratedOrMigrationPath } from '../../utils/astParser';
 
@@ -83,6 +83,8 @@ export const KnowledgeGraphCanvas: React.FC = () => {
     traceResult,
     isTracingPath,
     traceCallPath,
+    revealFileInExplorer,
+    setTargetEditorLine,
   } = useIDE();
 
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -91,6 +93,8 @@ export const KnowledgeGraphCanvas: React.FC = () => {
   const [pan, setPan] = useState({ x: 80, y: 70 });
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const pointerDownPosRef = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const pointerDownTargetNodeRef = React.useRef<GraphNode | null>(null);
   const hasDraggedRef = React.useRef(false);
 
   const [kindFilter, setKindFilter] = useState<NodeKindFilter>('all');
@@ -148,12 +152,12 @@ export const KnowledgeGraphCanvas: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && selectedGraphNode) {
-        setSelectedGraphNode(null);
+        handleClearFocus();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedGraphNode, setSelectedGraphNode]);
+  }, [selectedGraphNode]);
 
   // Set of node IDs involved in IMPORTS dependencies
   const dependencyNodeIds = useMemo(() => {
@@ -277,49 +281,156 @@ export const KnowledgeGraphCanvas: React.FC = () => {
     return Array.from(groups.values());
   }, [filteredNodes]);
 
-  // Pointer drag panning handlers
+  // Stable matching to find owning ProjectFile for a graph node (path & ID based, no filename-only collisions)
+  const findOwningFile = (node: GraphNode | null): ProjectFile | undefined => {
+    if (!node) return undefined;
+
+    // 1. Exact path match (normalized forward slashes)
+    if (node.path && !node.path.startsWith('http')) {
+      const normNodePath = node.path.replace(/\\/g, '/');
+      const byPath = files.find((f) => f.path.replace(/\\/g, '/') === normNodePath);
+      if (byPath) return byPath;
+    }
+
+    // 2. AST node ID prefix matching: node-file-${file.id} or node-sym-${file.id}-${symbol.name}
+    if (node.id.startsWith('node-file-')) {
+      const fileId = node.id.replace('node-file-', '');
+      const byId = files.find((f) => f.id === fileId);
+      if (byId) return byId;
+    }
+    if (node.id.startsWith('node-sym-')) {
+      const rest = node.id.replace('node-sym-', '');
+      const byId = files.find((f) => rest.startsWith(f.id));
+      if (byId) return byId;
+    }
+
+    // 3. Mock node ID match (e.g. node-payment-service -> payment-service)
+    const strippedId = node.id.replace(/^node-/, '');
+    const byStrippedId = files.find((f) => f.id === strippedId);
+    if (byStrippedId) return byStrippedId;
+
+    // 4. Stable relative path suffix matching (e.g. relative vs absolute)
+    if (node.path && !node.path.startsWith('http')) {
+      const normNodePath = node.path.replace(/\\/g, '/');
+      const bySuffix = files.find((f) => {
+        const normF = f.path.replace(/\\/g, '/');
+        return normNodePath.endsWith('/' + normF) || normF.endsWith('/' + normNodePath);
+      });
+      if (bySuffix) return bySuffix;
+    }
+
+    return undefined;
+  };
+
+  const handleSelectNode = (node: GraphNode) => {
+    setSelectedGraphNode(node);
+    const owningFile = findOwningFile(node);
+    if (owningFile) {
+      revealFileInExplorer(owningFile.id);
+    }
+  };
+
+  const handleClearFocus = () => {
+    setSelectedGraphNode(null);
+    pointerDownTargetNodeRef.current = null;
+    hasDraggedRef.current = false;
+  };
+
+  const handleOpenNodeInEditor = (node: GraphNode) => {
+    const owningFile = findOwningFile(node);
+    if (!owningFile) {
+      if (node.path && (node.path.startsWith('http://') || node.path.startsWith('https://'))) {
+        window.open(node.path, '_blank');
+      }
+      return;
+    }
+
+    // If node represents a function or class symbol, locate its line number
+    const cleanSymbolName = node.label.replace(/\(\)$/, '').trim();
+    const matchedSymbol = (owningFile.symbols || []).find(
+      (s: SymbolInfo) => s.name === cleanSymbolName || s.name === node.label
+    );
+
+    if (matchedSymbol && matchedSymbol.line) {
+      setTargetEditorLine(matchedSymbol.line);
+    } else if (node.type === 'File' || node.type === 'Test') {
+      setTargetEditorLine(1);
+    }
+
+    openFile(owningFile.id);
+    revealFileInExplorer(owningFile.id);
+    setActiveView('editor');
+  };
+
+  // Pointer drag panning handlers - cleanly distinguishes drags from clicks
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 && e.button !== 1) return;
     const target = e.target as HTMLElement;
     if (target.closest('button, input, select, textarea, aside')) return;
 
-    setIsDragging(true);
+    // Detect if click originated on a graph node
+    const nodeEl = (e.target as Element).closest('[data-graph-node-id]');
+    const nodeId = nodeEl?.getAttribute('data-graph-node-id');
+    const clickedNode = nodeId ? nodeMap.get(nodeId) || null : null;
+
+    pointerDownPosRef.current = { x: e.clientX, y: e.clientY };
     dragStartRef.current = { x: e.clientX, y: e.clientY };
+    pointerDownTargetNodeRef.current = clickedNode;
     hasDraggedRef.current = false;
-    e.currentTarget.setPointerCapture(e.pointerId);
+    setIsDragging(true);
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDragging) return;
 
-    const dx = e.clientX - dragStartRef.current.x;
-    const dy = e.clientY - dragStartRef.current.y;
+    const totalDist = Math.hypot(
+      e.clientX - pointerDownPosRef.current.x,
+      e.clientY - pointerDownPosRef.current.y
+    );
 
-    if (Math.hypot(dx, dy) > 3) {
+    // Only pan and capture pointer if movement exceeds threshold (6px)
+    if (totalDist > 6) {
       hasDraggedRef.current = true;
+      try {
+        if (!e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }
+      } catch {}
+
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
+
+      setPan((prev) => ({
+        x: prev.x + dx,
+        y: prev.y + dy,
+      }));
+
+      dragStartRef.current = { x: e.clientX, y: e.clientY };
     }
-
-    setPan((prev) => ({
-      x: prev.x + dx,
-      y: prev.y + dy,
-    }));
-
-    dragStartRef.current = { x: e.clientX, y: e.clientY };
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDragging) return;
     setIsDragging(false);
     try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
     } catch {}
 
     if (!hasDraggedRef.current) {
-      const target = e.target as HTMLElement | SVGElement;
-      if (target.getAttribute('data-canvas-bg') === 'true') {
-        setSelectedGraphNode(null);
+      if (pointerDownTargetNodeRef.current) {
+        handleSelectNode(pointerDownTargetNodeRef.current);
+      } else {
+        const target = e.target as HTMLElement;
+        if (!target.closest('aside, button, input, select, textarea')) {
+          handleClearFocus();
+        }
       }
     }
+
+    pointerDownTargetNodeRef.current = null;
+    hasDraggedRef.current = false;
   };
 
   // Zoom centered on viewport center (for toolbar +/- buttons)
@@ -376,10 +487,17 @@ export const KnowledgeGraphCanvas: React.FC = () => {
     setPan({ x: Math.round(panX), y: Math.round(panY) });
   };
 
-  const handleOpenInEditor = (path: string) => {
-    const targetFile = files.find((f) => f.path === path || f.name === path || path.endsWith(f.name));
+  const handleOpenInEditor = (path: string, line?: number) => {
+    const normPath = path.replace(/\\/g, '/');
+    const targetFile = files.find(
+      (f) => f.path.replace(/\\/g, '/') === normPath || f.name === normPath || normPath.endsWith('/' + f.name)
+    );
     if (targetFile) {
+      if (line) {
+        setTargetEditorLine(line);
+      }
       openFile(targetFile.id);
+      revealFileInExplorer(targetFile.id);
     }
     setActiveView('editor');
   };
@@ -387,7 +505,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
   const handleNodeKeyDown = (event: React.KeyboardEvent<SVGGElement>, node: GraphNode) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      setSelectedGraphNode(node);
+      handleSelectNode(node);
     }
   };
 
@@ -458,7 +576,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
             </span>
             <button
               type="button"
-              onClick={() => setSelectedGraphNode(null)}
+              onClick={handleClearFocus}
               className="ide-focus-ring text-ide-subtle hover:text-ide-text"
               title="Clear selection (Esc)"
             >
@@ -518,7 +636,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
                     <button
                       key={edge.id}
                       type="button"
-                      onClick={() => caller && setSelectedGraphNode(caller)}
+                      onClick={() => caller && handleSelectNode(caller)}
                       className="flex w-full items-center justify-between gap-2 p-1.5 text-left font-mono text-[10px] hover:bg-ide-hover transition-colors"
                       title={`Focus on ${caller?.label || 'source node'}`}
                     >
@@ -549,7 +667,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
                     <button
                       key={edge.id}
                       type="button"
-                      onClick={() => callee && setSelectedGraphNode(callee)}
+                      onClick={() => callee && handleSelectNode(callee)}
                       className="flex w-full items-center justify-between gap-2 p-1.5 text-left font-mono text-[10px] hover:bg-ide-hover transition-colors"
                       title={`Focus on ${callee?.label || 'target node'}`}
                     >
@@ -569,7 +687,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
           <div className="mt-auto flex flex-col gap-2 border-t border-ide-border pt-3">
             <button
               type="button"
-              onClick={() => setSelectedGraphNode(null)}
+              onClick={handleClearFocus}
               className="ide-focus-ring flex min-h-[32px] items-center justify-center gap-1.5 border border-ide-border bg-ide-surface px-3 text-[10px] font-semibold text-ide-muted hover:text-ide-text hover:bg-ide-hover rounded-ide-control"
             >
               <X className="h-3.5 w-3.5" /> Clear Focus (Esc)
@@ -587,7 +705,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => handleOpenInEditor(selectedGraphNode.path)}
+              onClick={() => handleOpenNodeInEditor(selectedGraphNode)}
               className="ide-focus-ring flex min-h-[34px] items-center justify-center gap-2 bg-ide-focus px-3 text-[10px] font-semibold text-white hover:bg-ide-focus/85 rounded-ide-control"
             >
               <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" /> Open in code editor
@@ -689,7 +807,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
             {selectedGraphNode && (
               <button
                 type="button"
-                onClick={() => setSelectedGraphNode(null)}
+                onClick={handleClearFocus}
                 className="ide-focus-ring flex items-center gap-1 rounded-ide-control border border-ide-amber/50 bg-ide-amber/15 px-2 py-1 font-mono text-[10px] font-semibold text-ide-amber hover:bg-ide-amber/25 transition-all"
                 title="Clear focus (Esc)"
               >
@@ -900,15 +1018,19 @@ export const KnowledgeGraphCanvas: React.FC = () => {
               return (
                 <g
                   key={node.id}
+                  data-graph-node-id={node.id}
                   transform={`translate(${node.x ?? 140}, ${node.y ?? 140})`}
                   role="button"
                   tabIndex={0}
                   focusable="true"
                   aria-label={`${node.label}, ${node.type}, ${node.path}`}
                   onClick={(e) => {
-                    if (hasDraggedRef.current) return;
                     e.stopPropagation();
-                    setSelectedGraphNode(node);
+                    handleSelectNode(node);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenNodeInEditor(node);
                   }}
                   onKeyDown={(event) => handleNodeKeyDown(event, node)}
                   className="cursor-pointer transition-opacity duration-150"
@@ -1187,7 +1309,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={() => handleOpenInEditor(path.file)}
+                    onClick={() => handleOpenInEditor(path.file, path.line)}
                     className="ide-focus-ring inline-flex min-h-[30px] items-center gap-1 self-start border border-ide-border-strong px-2.5 font-mono text-[10px] text-ide-text hover:bg-ide-hover md:self-auto rounded-ide-control"
                   >
                     Inspect line <ArrowRight className="h-3 w-3" />

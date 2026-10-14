@@ -158,6 +158,10 @@ interface IDEContextType {
   targetEditorLine: number | null;
   setTargetEditorLine: (line: number | null) => void;
   saveAllFiles: () => Promise<void>;
+
+  // Explorer Sync from Knowledge Graph / Symbol Navigation
+  revealedExplorerFileId: string | null;
+  revealFileInExplorer: (fileId: string) => void;
 }
 
 const INITIAL_GIT_COMMITS: GitCommit[] = [
@@ -199,6 +203,14 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Editor settings & navigation
   const [targetEditorLine, setTargetEditorLine] = useState<number | null>(null);
+  const [revealedExplorerFileId, setRevealedExplorerFileId] = useState<string | null>(null);
+
+  const revealFileInExplorer = (fileId: string) => {
+    setRevealedExplorerFileId(fileId);
+    setActiveFileId(fileId);
+    setSidebarView('explorer');
+    setIsSidebarVisible(true);
+  };
 
   const [editorSettings, setEditorSettings] = useState<EditorSettings>(() => {
     try {
@@ -1319,7 +1331,9 @@ Using persistent Knowledge Graph for **${masterPrompt.projectName}**:
         updateEditorSettings,
         targetEditorLine,
         setTargetEditorLine,
-        saveAllFiles
+        saveAllFiles,
+        revealedExplorerFileId,
+        revealFileInExplorer
       }}
     >
       {children}
