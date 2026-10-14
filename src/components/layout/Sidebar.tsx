@@ -1,10 +1,12 @@
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   AlertCircle,
   CaseSensitive,
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Code2,
   Diff,
   Edit2,
@@ -118,11 +120,17 @@ export const Sidebar: React.FC = () => {
     return null;
   }
 
+  // Reset collapsed folders when workspace files or project change so the new folder structure is cleanly visible
+  useEffect(() => {
+    setCollapsedFolders(new Set());
+  }, [masterPrompt.projectName]);
+
   // Build tree for explorer
   const fileTree: FileTreeNode = { name: 'root', fullPath: '', isFolder: true, children: {} };
 
   files.forEach((file) => {
-    const parts = file.path.split('/');
+    const normalizedPath = file.path.replace(/\\/g, '/');
+    const parts = normalizedPath.split('/').filter(Boolean);
     let current = fileTree;
 
     parts.forEach((part, index) => {
@@ -161,6 +169,24 @@ export const Sidebar: React.FC = () => {
     });
   };
 
+  const collapseAllFolders = () => {
+    const allFolders = new Set<string>();
+    const collectFolders = (node: FileTreeNode) => {
+      Object.values(node.children).forEach((child) => {
+        if (child.isFolder) {
+          allFolders.add(child.fullPath);
+          collectFolders(child);
+        }
+      });
+    };
+    collectFolders(fileTree);
+    setCollapsedFolders(allFolders);
+  };
+
+  const expandAllFolders = () => {
+    setCollapsedFolders(new Set());
+  };
+
   const submitCreateFile = async (event: React.FormEvent) => {
     event.preventDefault();
     const clean = newFileName.trim();
@@ -197,9 +223,13 @@ export const Sidebar: React.FC = () => {
     const supportedFiles = Array.from(fileList).filter((file) => !file.webkitRelativePath.includes('node_modules/'));
 
     supportedFiles.forEach((file) => {
-      const relativePath = file.webkitRelativePath || file.name;
+      const relativePath = (file.webkitRelativePath || file.name).replace(/\\/g, '/');
       const parts = relativePath.split('/');
-      if (parts.length > 1) folderName = parts[0];
+      let cleanPath = relativePath;
+      if (parts.length > 1) {
+        folderName = parts[0];
+        cleanPath = parts.slice(1).join('/');
+      }
       if (relativePath.includes('.git/')) return;
 
       const reader = new FileReader();
@@ -208,7 +238,7 @@ export const Sidebar: React.FC = () => {
         loadedFiles.push({
           id: `file-${Math.random().toString(36).substring(2, 9)}`,
           name: file.name,
-          path: relativePath,
+          path: cleanPath,
           language: file.name.split('.').pop() || 'typescript',
           content: fileContent,
           savedContent: fileContent,
@@ -495,12 +525,21 @@ export const Sidebar: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  disabled
-                  className="flex h-7 w-7 cursor-not-allowed items-center justify-center text-ide-subtle/50"
-                  title="More actions"
-                  aria-label="More actions"
+                  onClick={collapseAllFolders}
+                  className="ide-focus-ring flex h-7 w-7 items-center justify-center text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+                  title="Collapse all folders"
+                  aria-label="Collapse all folders"
                 >
-                  <MoreHorizontal className="h-3.5 w-3.5" />
+                  <ChevronsDownUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={expandAllFolders}
+                  className="ide-focus-ring flex h-7 w-7 items-center justify-center text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+                  title="Expand all folders"
+                  aria-label="Expand all folders"
+                >
+                  <ChevronsUpDown className="h-3.5 w-3.5" />
                 </button>
               </div>
             </div>

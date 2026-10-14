@@ -599,7 +599,29 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     directoryHandleRef.current = dirHandle || null;
     setPendingReconnect(null);
     setSaveError(null);
-    const initializedFiles = newFiles.map(f => ({
+
+    // Normalize paths: ensure forward slashes and strip redundant shared root folder prefixes
+    // (e.g. when loaded via folder input where webkitRelativePath starts with FolderName/)
+    let normalizedInput = newFiles.map(f => ({
+      ...f,
+      path: f.path.replace(/\\/g, '/')
+    }));
+
+    if (normalizedInput.length > 0) {
+      const firstParts = normalizedInput[0].path.split('/');
+      if (firstParts.length > 1) {
+        const potentialPrefix = firstParts[0] + '/';
+        const allSharePrefix = normalizedInput.every(f => f.path.startsWith(potentialPrefix));
+        if (allSharePrefix) {
+          normalizedInput = normalizedInput.map(f => ({
+            ...f,
+            path: f.path.substring(potentialPrefix.length)
+          }));
+        }
+      }
+    }
+
+    const initializedFiles = normalizedInput.map(f => ({
       ...f,
       savedContent: f.savedContent !== undefined ? f.savedContent : f.content,
       isDirty: f.isDirty !== undefined ? f.isDirty : false,

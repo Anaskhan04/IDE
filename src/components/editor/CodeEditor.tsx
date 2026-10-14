@@ -106,9 +106,13 @@ export const CodeEditor: React.FC = () => {
     const supportedFiles = Array.from(fileList).filter((file) => !file.webkitRelativePath.includes('node_modules/'));
 
     supportedFiles.forEach((file) => {
-      const relativePath = file.webkitRelativePath || file.name;
+      const relativePath = (file.webkitRelativePath || file.name).replace(/\\/g, '/');
       const parts = relativePath.split('/');
-      if (parts.length > 1) folderName = parts[0];
+      let cleanPath = relativePath;
+      if (parts.length > 1) {
+        folderName = parts[0];
+        cleanPath = parts.slice(1).join('/');
+      }
       if (relativePath.includes('.git/')) return;
 
       const reader = new FileReader();
@@ -117,7 +121,7 @@ export const CodeEditor: React.FC = () => {
         loadedFiles.push({
           id: `file-${Math.random().toString(36).substring(2, 9)}`,
           name: file.name,
-          path: relativePath,
+          path: cleanPath,
           language: file.name.split('.').pop() || 'typescript',
           content: fileContent,
           savedContent: fileContent,
