@@ -42,7 +42,14 @@ export const CodeEditor: React.FC = () => {
   const activeFile = files.find((file) => file.id === activeFileId);
   const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lineNumbersRef = useRef<HTMLDivElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const handleScroll = (event: React.UIEvent<HTMLTextAreaElement>) => {
+    if (lineNumbersRef.current) {
+      lineNumbersRef.current.scrollTop = event.currentTarget.scrollTop;
+    }
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -102,7 +109,7 @@ export const CodeEditor: React.FC = () => {
 
   if (!activeFile) {
     return (
-      <main id="editor-workspace" className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-ide-bg" data-purpose="editor-workspace">
+      <main id="editor-workspace" className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-ide-bg" data-purpose="editor-workspace">
         <input
           ref={folderInputRef}
           type="file"
@@ -225,7 +232,7 @@ export const CodeEditor: React.FC = () => {
   const hasImpactScore = isPendingAnalysis && ciaResult.targetId === activeFile.id;
 
   return (
-    <main id="editor-workspace" className="flex min-h-0 flex-1 flex-col overflow-hidden bg-ide-bg" data-purpose="editor-workspace">
+    <main id="editor-workspace" className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-ide-bg" data-purpose="editor-workspace">
       <div className="flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-ide-border bg-ide-shell" role="tablist" aria-label="Open files">
         {openFileIds.map((fileId) => {
           const file = files.find((candidate) => candidate.id === fileId);
@@ -354,9 +361,21 @@ export const CodeEditor: React.FC = () => {
         </div>
       )}
 
-      <div className="relative flex min-h-0 flex-1 overflow-hidden font-mono text-[12px] leading-5">
-        <div className="w-12 shrink-0 overflow-hidden bg-ide-bg px-2 pt-2 text-right text-[11px] text-ide-subtle select-none">
-          {lines.map((_, index) => <div key={index} className={`h-5 ${index + 1 === cursorPos.line ? 'text-ide-text' : ''}`}>{index + 1}</div>)}
+      <div className="relative flex h-full min-h-0 flex-1 overflow-hidden font-mono text-[12px] leading-5">
+        <div
+          ref={lineNumbersRef}
+          className="h-full min-h-0 shrink-0 overflow-hidden bg-ide-bg px-2 pt-2 pb-32 text-right text-[11px] text-ide-subtle select-none"
+          style={{ width: `${Math.max(48, String(lines.length).length * 8 + 20)}px` }}
+          aria-hidden="true"
+        >
+          {lines.map((_, index) => (
+            <div
+              key={index}
+              className={`h-5 leading-5 ${index + 1 === cursorPos.line ? 'text-ide-text font-bold' : ''}`}
+            >
+              {index + 1}
+            </div>
+          ))}
         </div>
 
         <textarea
@@ -366,17 +385,19 @@ export const CodeEditor: React.FC = () => {
             updateFileContent(activeFile.id, event.target.value);
             updateCursorInfo(event.target);
           }}
+          onScroll={handleScroll}
           onSelect={(event) => updateCursorInfo(event.currentTarget)}
           onKeyUp={(event) => updateCursorInfo(event.currentTarget)}
           onClick={(event) => updateCursorInfo(event.currentTarget)}
           spellCheck={false}
+          wrap="off"
           aria-label={`Editing ${activeFile.path}`}
-          className="min-w-0 flex-1 resize-none overflow-auto border-0 bg-transparent p-2 text-[12px] leading-5 text-ide-text outline-none selection:bg-ide-focus/30"
+          className="h-full min-h-0 min-w-0 flex-1 resize-none overflow-auto whitespace-pre border-0 bg-transparent p-2 pb-32 font-mono text-[12px] leading-5 text-ide-text outline-none selection:bg-ide-focus/30"
           style={{ tabSize: 2 }}
         />
 
         {lines.length > 8 && (
-          <div className="hidden w-16 shrink-0 overflow-hidden border-l border-ide-border bg-ide-shell/70 p-1.5 select-none lg:block" data-purpose="code-minimap" aria-hidden="true">
+          <div className="hidden h-full min-h-0 w-16 shrink-0 overflow-hidden border-l border-ide-border bg-ide-shell/70 p-1.5 select-none lg:block" data-purpose="code-minimap" aria-hidden="true">
             {lines.slice(0, 80).map((line, index) => {
               const trimmed = line.trim();
               if (!trimmed) return <div key={index} className="minimap-line my-0.5 w-0" />;

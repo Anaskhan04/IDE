@@ -50,6 +50,8 @@ export interface GraphNode {
   type: CBMNodeType;
   module: string;
   cluster?: string;
+  architectureArea?: 'frontend' | 'backend' | 'database' | 'utilities' | 'tests' | 'core';
+  isGenerated?: boolean;
   path: string;
   impactStatus: 'none' | 'modified' | 'direct' | 'indirect';
   x?: number;

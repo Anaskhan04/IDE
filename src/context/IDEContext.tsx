@@ -281,6 +281,20 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const applyUpdatedAst = (updatedList: ProjectFile[]) => {
+    try {
+      const { nodes, edges, enrichedFiles } = buildGraphFromFiles(updatedList);
+      if (nodes.length > 0) {
+        setGraphNodes(nodes);
+        setGraphEdges(edges);
+      }
+      return enrichedFiles.length > 0 ? enrichedFiles : updatedList;
+    } catch (e) {
+      console.warn('AST update failed:', e);
+      return updatedList;
+    }
+  };
+
   const saveFile = async (fileId: string): Promise<void> => {
     const file = files.find(f => f.id === fileId);
     if (!file) return;
@@ -291,7 +305,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (file.fileHandle) {
       try {
         await writeFileHandle(file.fileHandle, file.content);
-        setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content } : f));
+        setFiles(prev => applyUpdatedAst(prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content } : f)));
         return;
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -306,7 +320,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try {
         const handle = await createFileInDirectory(directoryHandleRef.current, file.path, file.content);
         if (handle) {
-          setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content, fileHandle: handle } : f));
+          setFiles(prev => applyUpdatedAst(prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content, fileHandle: handle } : f)));
           return;
         } else {
           setSaveError(`Failed to write "${file.name}" to directory.`);
@@ -324,7 +338,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Exports/downloads the file to disk via browser download without pretending direct write succeeded
     try {
       downloadFile(file.name, file.content);
-      setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content } : f));
+      setFiles(prev => applyUpdatedAst(prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content } : f)));
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       setSaveError(`Failed to export "${file.name}": ${errorMsg}`);
@@ -373,17 +387,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setFiles(prev => {
       const updated = [...prev, newFile];
-      // Automatically refresh knowledge graph with new file AST
-      try {
-        const { nodes, edges } = buildGraphFromFiles(updated);
-        if (nodes.length > 0) {
-          setGraphNodes(nodes);
-          setGraphEdges(edges);
-        }
-      } catch (e) {
-        console.error('AST parsing failed', e);
-      }
-      return updated;
+      return applyUpdatedAst(updated);
     });
 
     setOpenFileIds(prev => prev.includes(newFile.id) ? prev : [...prev, newFile.id]);
@@ -424,14 +428,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Disk deletion succeeded (or mock mode): update state
     setFiles(prev => {
       const updated = prev.filter(f => f.id !== fileId);
-      try {
-        const { nodes, edges } = buildGraphFromFiles(updated);
-        if (nodes.length > 0) {
-          setGraphNodes(nodes);
-          setGraphEdges(edges);
-        }
-      } catch (e) {}
-      return updated;
+      return applyUpdatedAst(updated);
     });
     closeFile(fileId);
     return true;
@@ -495,14 +492,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           fileHandle: updatedHandle
         };
       });
-      try {
-        const { nodes, edges } = buildGraphFromFiles(updated);
-        if (nodes.length > 0) {
-          setGraphNodes(nodes);
-          setGraphEdges(edges);
-        }
-      } catch (e) {}
-      return updated;
+      return applyUpdatedAst(updated);
     });
     return true;
   };
@@ -544,9 +534,12 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     }
 
-    // Generate dynamic Knowledge Graph from actual loaded files!
+    // Generate dynamic Knowledge Graph and real symbols from actual loaded files!
     try {
-      const { nodes, edges } = buildGraphFromFiles(newFiles);
+      const { nodes, edges, enrichedFiles } = buildGraphFromFiles(initializedFiles);
+      if (enrichedFiles && enrichedFiles.length > 0) {
+        setFiles(enrichedFiles);
+      }
       if (nodes.length > 0) {
         setGraphNodes(nodes);
         setGraphEdges(edges);
@@ -768,7 +761,10 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }));
 
           try {
-            const { nodes, edges } = buildGraphFromFiles(loadedFiles);
+            const { nodes, edges, enrichedFiles } = buildGraphFromFiles(loadedFiles);
+            if (enrichedFiles && enrichedFiles.length > 0) {
+              setFiles(enrichedFiles);
+            }
             if (nodes.length > 0) {
               setGraphNodes(nodes);
               setGraphEdges(edges);
@@ -880,13 +876,25 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const rebuildAST = async () => {
     setIsAnalyzingAST(true);
-    await new Promise(r => setTimeout(r, 1500));
-    setIsAnalyzingAST(false);
-    setMasterPrompt(prev => ({
-      ...prev,
-      lastSynced: 'Just now (codebase-memory-mcp incremental rebuild)',
-      astVersion: 'AST-SHA-' + Math.random().toString(36).substring(2, 8)
-    }));
+    try {
+      const { nodes, edges, enrichedFiles } = buildGraphFromFiles(files);
+      if (enrichedFiles && enrichedFiles.length > 0) {
+        setFiles(enrichedFiles);
+      }
+      if (nodes.length > 0) {
+        setGraphNodes(nodes);
+        setGraphEdges(edges);
+      }
+      setMasterPrompt(prev => ({
+        ...prev,
+        lastSynced: 'Just now (AST parsed & synchronized)',
+        astVersion: 'AST-' + Math.random().toString(36).substring(2, 8).toUpperCase()
+      }));
+    } catch (err) {
+      console.error('rebuildAST error:', err);
+    } finally {
+      setIsAnalyzingAST(false);
+    }
   };
 
   const executeCypherQuery = async (query: string): Promise<CypherQueryResult> => {

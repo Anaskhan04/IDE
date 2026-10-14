@@ -478,8 +478,38 @@ export const Sidebar: React.FC = () => {
           Outline
         </button>
         {outlineOpen && (
-          <div className="max-h-28 overflow-y-auto px-4 py-2 font-mono text-[10px] text-ide-muted">
-            {activeFile?.symbols?.length ? activeFile.symbols.map((symbol) => <div key={symbol.id} className="py-0.5">ƒ {symbol.name}</div>) : <span className="text-ide-subtle">No symbols found</span>}
+          <div className="max-h-36 overflow-y-auto px-3 py-1 font-mono text-[10px] text-ide-muted">
+            {activeFile?.symbols?.length ? (
+              activeFile.symbols.map((symbol) => {
+                const kindBadge =
+                  symbol.kind === 'class' ? 'text-ide-amber font-bold'
+                  : symbol.kind === 'interface' ? 'text-ide-purple font-bold'
+                  : symbol.kind === 'type' ? 'text-ide-purple'
+                  : symbol.kind === 'function' ? 'text-ide-cyan font-bold'
+                  : 'text-ide-muted';
+                const kindSymbol =
+                  symbol.kind === 'class' ? 'C'
+                  : symbol.kind === 'interface' ? 'I'
+                  : symbol.kind === 'type' ? 'T'
+                  : symbol.kind === 'function' ? 'ƒ'
+                  : 'v';
+                return (
+                  <div
+                    key={symbol.id}
+                    className="flex items-center justify-between py-0.5 hover:text-ide-strong hover:bg-ide-hover/40 px-1 rounded-sm"
+                    title={`${symbol.kind} ${symbol.name} (line ${symbol.line})`}
+                  >
+                    <div className="flex items-center gap-1.5 truncate">
+                      <span className={`w-3 text-center text-[10px] ${kindBadge}`}>{kindSymbol}</span>
+                      <span className="truncate">{symbol.name}</span>
+                    </div>
+                    <span className="text-[9px] text-ide-subtle font-sans shrink-0 pl-1">:{symbol.line}</span>
+                  </div>
+                );
+              })
+            ) : (
+              <span className="text-ide-subtle px-1">No symbols found</span>
+            )}
           </div>
         )}
         <button

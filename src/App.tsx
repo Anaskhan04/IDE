@@ -26,7 +26,7 @@ export const AppContent: React.FC = () => {
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-ide-bg">
           <WorkspaceModeTabs />
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
             {activeView === 'editor' && <CodeEditor />}
             {activeView === 'cia' && <CIASimulator />}
             {activeView === 'mcp' && <MCPDashboard />}
