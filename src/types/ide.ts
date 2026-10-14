@@ -7,6 +7,45 @@ export type ActiveView =
   | 'evaluation' 
   | 'analyzer';
 
+export type SidebarView = 'explorer' | 'search' | 'git' | 'settings';
+
+export interface EditorSettings {
+  fontSize: number;
+  tabSize: number;
+  wordWrap: boolean;
+  showMinimap: boolean;
+  lineNumbers: boolean;
+}
+
+export interface GitCommit {
+  hash: string;
+  message: string;
+  author: string;
+  time: string;
+  filesCount?: number;
+}
+
+export interface SearchMatch {
+  fileId: string;
+  filePath: string;
+  fileName: string;
+  lineNumber: number;
+  lineText: string;
+  matchStart: number;
+  matchEnd: number;
+  isSymbol?: boolean;
+  symbolKind?: string;
+}
+
+export interface CommandItem {
+  id: string;
+  title: string;
+  category: string;
+  shortcut?: string;
+  action: () => void | Promise<void>;
+  icon?: string;
+}
+
 export interface ProjectFile {
   id: string;
   name: string;

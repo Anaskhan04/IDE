@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { 
   ActiveView, 
+  SidebarView,
+  EditorSettings,
+  GitCommit,
   ProjectFile, 
   GraphNode, 
   GraphEdge, 
@@ -123,7 +126,57 @@ interface IDEContextType {
   pendingReconnect: PendingReconnect | null;
   reconnectWorkspace: () => Promise<boolean>;
   dismissReconnect: () => void;
+
+  // Multi-view Sidebar & Navigation
+  sidebarView: SidebarView;
+  setSidebarView: (view: SidebarView) => void;
+  isSidebarVisible: boolean;
+  setIsSidebarVisible: (visible: boolean) => void;
+  toggleSidebar: () => void;
+  isCommandPaletteOpen: boolean;
+  setIsCommandPaletteOpen: (open: boolean) => void;
+  isSettingsOpen: boolean;
+  setIsSettingsOpen: (open: boolean) => void;
+
+  // Git / Local Source Control
+  gitBranch: string;
+  setGitBranch: (branch: string) => void;
+  stagedFileIds: string[];
+  stageFile: (fileId: string) => void;
+  unstageFile: (fileId: string) => void;
+  stageAll: () => void;
+  unstageAll: () => void;
+  discardChanges: (fileId: string) => void;
+  gitCommits: GitCommit[];
+  commitStaged: (message: string) => boolean;
+  diffTargetFileId: string | null;
+  setDiffTargetFileId: (fileId: string | null) => void;
+
+  // Editor Preferences & Quick Operations
+  editorSettings: EditorSettings;
+  updateEditorSettings: (settings: Partial<EditorSettings>) => void;
+  targetEditorLine: number | null;
+  setTargetEditorLine: (line: number | null) => void;
+  saveAllFiles: () => Promise<void>;
 }
+
+const INITIAL_GIT_COMMITS: GitCommit[] = [
+  { hash: 'b797a13', message: 'feat: enhance knowledge graph canvas, AST parser relations, and editor layout', author: 'Anas khan', time: '15 minutes ago', filesCount: 7 },
+  { hash: '7c1838c', message: 'feat: implement full filesystem operations, session reconnect, and workspace persistence', author: 'Anas khan', time: '3 hours ago', filesCount: 6 },
+  { hash: '271c688', message: 'fix: track saved baseline to accurately reflect unsaved changes', author: 'Anas khan', time: '4 hours ago', filesCount: 4 },
+  { hash: '2396bb8', message: 'feat: update UI and establish design system', author: 'Anas khan', time: '3 weeks ago', filesCount: 12 },
+  { hash: 'c01b7ac', message: 'feat: start with clean empty workspace and clear pre-added files', author: 'Nitin Kumar Singh', time: '4 weeks ago', filesCount: 5 },
+  { hash: '256659f', message: 'feat: implement Stitch IntelliCode IDE UI clone with clean layout', author: 'Nitin Kumar Singh', time: '4 weeks ago', filesCount: 18 },
+  { hash: '1695aa2', message: 'initial commit', author: 'Nitin Kumar Singh', time: '4 weeks ago', filesCount: 22 },
+];
+
+const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
+  fontSize: 12,
+  tabSize: 2,
+  wordWrap: false,
+  showMinimap: true,
+  lineNumbers: true,
+};
 
 const IDEContext = createContext<IDEContextType | undefined>(undefined);
 
@@ -131,6 +184,46 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [activeView, setActiveView] = useState<ActiveView>('editor'); // Default to Code Editor (Knowledge Graph disabled)
   const [currentProjectId, setCurrentProjectIdState] = useState<ProjectId>('codebase-memory-mcp');
   
+  // Multi-view sidebar & visibility
+  const [sidebarView, setSidebarView] = useState<SidebarView>('explorer');
+  const [isSidebarVisible, setIsSidebarVisible] = useState<boolean>(true);
+  const toggleSidebar = () => setIsSidebarVisible(prev => !prev);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+
+  // Git state
+  const [gitBranch, setGitBranch] = useState<string>('anas-workspace-v1');
+  const [stagedFileIds, setStagedFileIds] = useState<string[]>([]);
+  const [gitCommits, setGitCommits] = useState<GitCommit[]>(INITIAL_GIT_COMMITS);
+  const [diffTargetFileId, setDiffTargetFileId] = useState<string | null>(null);
+
+  // Editor settings & navigation
+  const [targetEditorLine, setTargetEditorLine] = useState<number | null>(null);
+
+  const [editorSettings, setEditorSettings] = useState<EditorSettings>(() => {
+    try {
+      const stored = localStorage.getItem('intellicode_editor_settings');
+      if (stored) {
+        return { ...DEFAULT_EDITOR_SETTINGS, ...JSON.parse(stored) };
+      }
+    } catch (e) {
+      // ignore
+    }
+    return DEFAULT_EDITOR_SETTINGS;
+  });
+
+  const updateEditorSettings = (partial: Partial<EditorSettings>) => {
+    setEditorSettings(prev => {
+      const updated = { ...prev, ...partial };
+      try {
+        localStorage.setItem('intellicode_editor_settings', JSON.stringify(updated));
+      } catch (e) {
+        // ignore
+      }
+      return updated;
+    });
+  };
+
   // Workspace starts clean and empty!
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [activeFileId, setActiveFileId] = useState<string>('');
@@ -568,6 +661,76 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('showDirectoryPicker failed:', err);
       return false;
     }
+  };
+
+  const saveAllFiles = async (): Promise<void> => {
+    const dirtyFiles = files.filter(f => f.isDirty);
+    for (const f of dirtyFiles) {
+      await saveFile(f.id);
+    }
+  };
+
+  const stageFile = (fileId: string) => {
+    setStagedFileIds(prev => prev.includes(fileId) ? prev : [...prev, fileId]);
+  };
+
+  const unstageFile = (fileId: string) => {
+    setStagedFileIds(prev => prev.filter(id => id !== fileId));
+  };
+
+  const stageAll = () => {
+    const changed = files.filter(f => f.isDirty || f.isModified).map(f => f.id);
+    setStagedFileIds(changed);
+  };
+
+  const unstageAll = () => {
+    setStagedFileIds([]);
+  };
+
+  const discardChanges = (fileId: string) => {
+    setFiles(prev => prev.map(f => {
+      if (f.id !== fileId) return f;
+      const original = f.savedContent !== undefined ? f.savedContent : f.content;
+      return {
+        ...f,
+        content: original,
+        isDirty: false,
+        isModified: false
+      };
+    }));
+    setStagedFileIds(prev => prev.filter(id => id !== fileId));
+    if (diffTargetFileId === fileId) {
+      setDiffTargetFileId(null);
+    }
+  };
+
+  const commitStaged = (message: string): boolean => {
+    const trimmed = message.trim();
+    if (!trimmed || stagedFileIds.length === 0) return false;
+
+    setFiles(prev => prev.map(f => {
+      if (stagedFileIds.includes(f.id)) {
+        return {
+          ...f,
+          savedContent: f.content,
+          isDirty: false,
+          isModified: false
+        };
+      }
+      return f;
+    }));
+
+    const newCommit: GitCommit = {
+      hash: Math.random().toString(16).substring(2, 9),
+      message: trimmed,
+      author: 'Anas khan',
+      time: 'Just now',
+      filesCount: stagedFileIds.length
+    };
+
+    setGitCommits(prev => [newCommit, ...prev]);
+    setStagedFileIds([]);
+    return true;
   };
 
   // Protect unsaved changes before page reload or navigation
@@ -1108,7 +1271,33 @@ Using persistent Knowledge Graph for **${masterPrompt.projectName}**:
         isRestoringWorkspace,
         pendingReconnect,
         reconnectWorkspace,
-        dismissReconnect
+        dismissReconnect,
+        sidebarView,
+        setSidebarView,
+        isSidebarVisible,
+        setIsSidebarVisible,
+        toggleSidebar,
+        isCommandPaletteOpen,
+        setIsCommandPaletteOpen,
+        isSettingsOpen,
+        setIsSettingsOpen,
+        gitBranch,
+        setGitBranch,
+        stagedFileIds,
+        stageFile,
+        unstageFile,
+        stageAll,
+        unstageAll,
+        discardChanges,
+        gitCommits,
+        commitStaged,
+        diffTargetFileId,
+        setDiffTargetFileId,
+        editorSettings,
+        updateEditorSettings,
+        targetEditorLine,
+        setTargetEditorLine,
+        saveAllFiles
       }}
     >
       {children}
