@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronRight, FilePlus, FolderOpen, Play, Search, X } from 'lucide-react';
+import { AlertCircle, ChevronRight, FilePlus, FolderOpen, Play, Save, Search, X } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 
 const getLanguageMark = (fileName: string) => {
@@ -24,8 +24,11 @@ export const CodeEditor: React.FC = () => {
     closeFile,
     updateFileContent,
     saveFile,
+    saveError,
+    clearSaveError,
     createFile,
     loadExternalFiles,
+    openProjectFolder,
     ciaResult,
     runTests,
     isExecutingTests,
@@ -49,39 +52,10 @@ export const CodeEditor: React.FC = () => {
   }, [activeFile, saveFile]);
 
   const handleSelectFolder = async () => {
-    if ('showDirectoryPicker' in window) {
-      try {
-        // @ts-ignore File System Access API is not available in all lib.dom versions.
-        const directoryHandle = await window.showDirectoryPicker();
-        const loadedFiles: any[] = [];
-
-        async function readDirectory(handle: any, currentPath: string) {
-          for await (const entry of handle.values()) {
-            if (entry.kind === 'file') {
-              if (!/\.(ts|tsx|js|jsx|json|c|h|cpp|py|md|html|css|yaml|txt)$/i.test(entry.name)) continue;
-              const file = await entry.getFile();
-              loadedFiles.push({
-                id: `file-${Math.random().toString(36).substring(2, 9)}`,
-                name: entry.name,
-                path: currentPath ? `${currentPath}/${entry.name}` : entry.name,
-                language: entry.name.split('.').pop() || 'typescript',
-                content: await file.text(),
-                isDirty: false,
-              });
-            } else if (entry.kind === 'directory' && !['node_modules', '.git', 'dist', '.vscode'].includes(entry.name)) {
-              await readDirectory(entry, currentPath ? `${currentPath}/${entry.name}` : entry.name);
-            }
-          }
-        }
-
-        await readDirectory(directoryHandle, '');
-        if (loadedFiles.length > 0) loadExternalFiles(loadedFiles, directoryHandle.name);
-        return;
-      } catch (error: any) {
-        if (error?.name === 'AbortError') return;
-      }
+    const opened = await openProjectFolder();
+    if (!opened) {
+      folderInputRef.current?.click();
     }
-    folderInputRef.current?.click();
   };
 
   const handleFolderInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -100,12 +74,14 @@ export const CodeEditor: React.FC = () => {
 
       const reader = new FileReader();
       reader.onload = () => {
+        const fileContent = String(reader.result || '');
         loadedFiles.push({
           id: `file-${Math.random().toString(36).substring(2, 9)}`,
           name: file.name,
           path: relativePath,
           language: file.name.split('.').pop() || 'typescript',
-          content: String(reader.result || ''),
+          content: fileContent,
+          savedContent: fileContent,
           isDirty: false,
         });
         if (loadedFiles.length === supportedFiles.length) loadExternalFiles(loadedFiles, folderName);
@@ -234,11 +210,61 @@ export const CodeEditor: React.FC = () => {
             </React.Fragment>
           );
         })}
-        <span className="ml-auto hidden items-center gap-2 text-ide-subtle sm:flex">
-          <Search className="h-3 w-3" aria-hidden="true" />
-          {cursorPos.line}:{cursorPos.col}
-        </span>
+        <div className="ml-auto flex items-center gap-3">
+          {/* Storage Mode indicator */}
+          {activeFile.fileHandle ? (
+            <span className="hidden items-center gap-1 text-[10px] text-ide-emerald md:flex" title="Direct disk write-back available via File System Access API">
+              <span className="h-1.5 w-1.5 rounded-full bg-ide-emerald" aria-hidden="true" />
+              Live Disk
+            </span>
+          ) : (
+            <span className="hidden items-center gap-1 text-[10px] text-ide-amber md:flex" title="Direct disk write unavailable; Save will export via browser download">
+              <span className="h-1.5 w-1.5 rounded-full bg-ide-amber" aria-hidden="true" />
+              Export Mode
+            </span>
+          )}
+
+          {/* Save Button */}
+          <button
+            type="button"
+            onClick={() => saveFile(activeFile.id)}
+            disabled={!activeFile.isDirty}
+            className={`ide-focus-ring flex items-center gap-1 rounded-ide-control px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              activeFile.isDirty
+                ? 'bg-ide-focus text-white hover:bg-ide-focus/90'
+                : 'text-ide-subtle opacity-70 cursor-default'
+            }`}
+            title={activeFile.isDirty ? 'Save changes (Ctrl+S)' : 'All changes saved'}
+            aria-label={activeFile.isDirty ? 'Save changes' : 'All changes saved'}
+          >
+            <Save className="h-3 w-3" aria-hidden="true" />
+            <span>{activeFile.isDirty ? (activeFile.fileHandle ? 'Save' : 'Export') : 'Saved'}</span>
+          </button>
+
+          <span className="hidden items-center gap-2 text-ide-subtle sm:flex">
+            <Search className="h-3 w-3" aria-hidden="true" />
+            {cursorPos.line}:{cursorPos.col}
+          </span>
+        </div>
       </div>
+
+      {saveError && (
+        <div className="flex min-h-[34px] shrink-0 items-center justify-between gap-3 border-b border-ide-rose/40 bg-ide-panel px-3 font-mono text-[10px] text-ide-rose" role="alert">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0 text-ide-rose" aria-hidden="true" />
+            <span>{saveError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={clearSaveError}
+            className="ide-focus-ring flex h-6 w-6 items-center justify-center text-ide-muted hover:text-ide-text"
+            aria-label="Dismiss save error"
+            title="Dismiss error"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {isPendingAnalysis && (
         <div className="flex min-h-[34px] shrink-0 items-center gap-3 border-b border-ide-amber/40 bg-ide-panel px-3 font-mono text-[10px] text-ide-muted" data-purpose="cia-warning-banner">

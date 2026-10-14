@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { 
   ActiveView, 
   ProjectFile, 
@@ -28,6 +28,13 @@ import { INITIAL_TEST_SUITES } from '../data/mockTests';
 import { EVALUATION_EXPERIMENTS } from '../data/mockBenchmarks';
 import { INITIAL_MASTER_PROMPT, MasterPromptData } from '../data/mockMasterPrompt';
 import { buildGraphFromFiles } from '../utils/astParser';
+import { 
+  hasFsAccess, 
+  writeFileHandle, 
+  downloadFile, 
+  readDirectoryRecursive, 
+  createFileInDirectory 
+} from '../utils/fsAccess';
 
 export type ProjectId = 'codebase-memory-mcp' | 'novastore' | 'custom';
 
@@ -82,8 +89,18 @@ interface IDEContextType {
   createFile: (name: string, folderPath?: string, content?: string) => void;
   deleteFile: (fileId: string) => void;
   renameFile: (fileId: string, newName: string) => void;
-  saveFile: (fileId: string) => void;
-  loadExternalFiles: (newFiles: ProjectFile[], folderName?: string) => void;
+  /** Save the file to disk (via File System Access API) if a handle is available,
+   *  or trigger a browser download as a fallback. Clears isDirty on success. */
+  saveFile: (fileId: string) => Promise<void>;
+  /** The last save error message, if any. Cleared by clearSaveError(). */
+  saveError: string | null;
+  clearSaveError: () => void;
+  /** True when the File System Access API with write support is available in this browser. */
+  hasFsAccess: boolean;
+  loadExternalFiles: (newFiles: ProjectFile[], folderName?: string, dirHandle?: FileSystemDirectoryHandle) => void;
+  /** Open a local folder using the File System Access API with handle retention.
+   *  Returns true if handled/opened, or false if unsupported / should trigger input fallback. */
+  openProjectFolder: () => Promise<boolean>;
 }
 
 const IDEContext = createContext<IDEContextType | undefined>(undefined);
@@ -122,6 +139,10 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [traceResult, setTraceResult] = useState<TracePathResult | null>(null);
   const [isTracingPath, setIsTracingPath] = useState(false);
 
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const directoryHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
+  const clearSaveError = () => setSaveError(null);
+
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: 'msg-init',
@@ -137,8 +158,14 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const setCurrentProjectId = (id: ProjectId) => {
     setCurrentProjectIdState(id);
+    directoryHandleRef.current = null;
+    setSaveError(null);
     if (id === 'codebase-memory-mcp') {
-      setFiles(CBM_REPO_FILES);
+      setFiles(CBM_REPO_FILES.map(f => ({
+        ...f,
+        savedContent: f.content,
+        isDirty: false,
+      })));
       setGraphNodes(CBM_GRAPH_NODES);
       setGraphEdges(CBM_GRAPH_EDGES);
       setCiaResult(CBM_CIA_RESULT);
@@ -174,7 +201,11 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ]
       });
     } else {
-      setFiles(INITIAL_FILES);
+      setFiles(INITIAL_FILES.map(f => ({
+        ...f,
+        savedContent: f.content,
+        isDirty: false,
+      })));
       setGraphNodes(INITIAL_GRAPH_NODES);
       setGraphEdges(INITIAL_GRAPH_EDGES);
       setCiaResult(DEFAULT_CIA_RESULT);
@@ -201,14 +232,71 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateFileContent = (fileId: string, content: string) => {
-    setFiles(prev => prev.map(f => f.id === fileId ? { ...f, content, isModified: true, isDirty: true } : f));
+    setFiles(prev => prev.map(f => {
+      if (f.id !== fileId) return f;
+      const baseline = f.savedContent !== undefined ? f.savedContent : f.content;
+      const isDirty = content !== baseline;
+      return {
+        ...f,
+        content,
+        savedContent: baseline,
+        isDirty,
+        isModified: f.isModified || isDirty
+      };
+    }));
     if (fileId === 'payment-service' || fileId === 'auth-service' || fileId === 'cbm-cypher') {
       runChangeImpactAnalysis(fileId);
     }
   };
 
-  const saveFile = (fileId: string) => {
-    setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isDirty: false } : f));
+  const saveFile = async (fileId: string): Promise<void> => {
+    const file = files.find(f => f.id === fileId);
+    if (!file) return;
+
+    setSaveError(null);
+
+    // 1. Direct write-back via existing FileSystemFileHandle
+    if (file.fileHandle) {
+      try {
+        await writeFileHandle(file.fileHandle, file.content);
+        setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content } : f));
+        return;
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setSaveError(`Failed to save "${file.name}" to disk: ${errorMsg}`);
+        console.error('Error writing fileHandle:', err);
+        return;
+      }
+    }
+
+    // 2. Direct write-back via active project directory handle (for newly created files)
+    if (directoryHandleRef.current) {
+      try {
+        const handle = await createFileInDirectory(directoryHandleRef.current, file.path, file.content);
+        if (handle) {
+          setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content, fileHandle: handle } : f));
+          return;
+        } else {
+          setSaveError(`Failed to write "${file.name}" to directory.`);
+          return;
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setSaveError(`Failed to write "${file.name}" to directory: ${errorMsg}`);
+        console.error('Error writing to directory handle:', err);
+        return;
+      }
+    }
+
+    // 3. Honest fallback for unsupported browsers, uploaded folder input, or mock project mode:
+    // Exports/downloads the file to disk via browser download without pretending direct write succeeded
+    try {
+      downloadFile(file.name, file.content);
+      setFiles(prev => prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content } : f));
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setSaveError(`Failed to export "${file.name}": ${errorMsg}`);
+    }
   };
 
   const createFile = (name: string, folderPath?: string, content: string = '') => {
@@ -216,12 +304,14 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!cleanName) return;
     const path = folderPath ? `${folderPath}/${cleanName}` : (cleanName.includes('/') ? cleanName : `src/${cleanName}`);
     const ext = cleanName.split('.').pop() || 'ts';
+    const initialContent = content || `// ${cleanName}\n// Created in IntelliCode\n\n`;
     const newFile: ProjectFile = {
       id: 'file-' + Date.now(),
       name: cleanName.split('/').pop() || cleanName,
       path,
       language: ext === 'c' || ext === 'h' ? 'c' : ext === 'py' ? 'python' : ext === 'json' ? 'json' : 'typescript',
-      content: content || `// ${cleanName}\n// Created in IntelliCode\n\n`,
+      content: initialContent,
+      savedContent: initialContent,
       isDirty: false
     };
 
@@ -242,6 +332,19 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setOpenFileIds(prev => [...prev, newFile.id]);
     setActiveFileId(newFile.id);
+
+    // If a project directory handle is active, also create the file on disk
+    if (directoryHandleRef.current) {
+      createFileInDirectory(directoryHandleRef.current, path, newFile.content)
+        .then(handle => {
+          if (handle) {
+            setFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, fileHandle: handle } : f));
+          }
+        })
+        .catch(err => {
+          console.warn('Could not create file on disk immediately:', err);
+        });
+    }
   };
 
   const deleteFile = (fileId: string) => {
@@ -270,15 +373,26 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
   };
 
-  const loadExternalFiles = (newFiles: ProjectFile[], folderName?: string) => {
+  const loadExternalFiles = (
+    newFiles: ProjectFile[], 
+    folderName?: string, 
+    dirHandle?: FileSystemDirectoryHandle
+  ) => {
     if (newFiles.length === 0) return;
-    setFiles(newFiles);
-    setOpenFileIds([newFiles[0].id]);
-    setActiveFileId(newFiles[0].id);
+    directoryHandleRef.current = dirHandle || null;
+    setSaveError(null);
+    const initializedFiles = newFiles.map(f => ({
+      ...f,
+      savedContent: f.savedContent !== undefined ? f.savedContent : f.content,
+      isDirty: f.isDirty !== undefined ? f.isDirty : false,
+    }));
+    setFiles(initializedFiles);
+    setOpenFileIds([initializedFiles[0].id]);
+    setActiveFileId(initializedFiles[0].id);
     setCurrentProjectIdState('custom');
     setMasterPrompt(prev => ({
       ...prev,
-      projectName: folderName || 'Opened Workspace',
+      projectName: folderName || (dirHandle ? dirHandle.name : 'Opened Workspace'),
       lastSynced: 'Just now (Loaded from folder)',
       astVersion: 'AST-' + Math.random().toString(36).substring(2, 7).toUpperCase()
     }));
@@ -293,6 +407,26 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     } catch (e) {
       console.error('Failed to parse graph from loaded files', e);
+    }
+  };
+
+  const openProjectFolder = async (): Promise<boolean> => {
+    if (!hasFsAccess) return false;
+    try {
+      // @ts-ignore File System Access API is not available in all lib.dom versions.
+      const dirHandle: FileSystemDirectoryHandle = await window.showDirectoryPicker();
+      const loadedFiles = await readDirectoryRecursive(dirHandle);
+      if (loadedFiles.length > 0) {
+        loadExternalFiles(loadedFiles, dirHandle.name, dirHandle);
+        return true;
+      }
+      return true;
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        return true;
+      }
+      console.warn('showDirectoryPicker failed:', err);
+      return false;
     }
   };
 
@@ -586,6 +720,10 @@ Using persistent Knowledge Graph for **${masterPrompt.projectName}**:
         deleteFile,
         renameFile,
         saveFile,
+        saveError,
+        clearSaveError,
+        hasFsAccess,
+        openProjectFolder,
         loadExternalFiles
       }}
     >

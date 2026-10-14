@@ -13,10 +13,14 @@ export interface ProjectFile {
   path: string;
   language: string;
   content: string;
+  savedContent?: string;
   isModified?: boolean;
   isDirty?: boolean;
   impactLevel?: 'none' | 'direct' | 'indirect' | 'modified';
   symbols?: SymbolInfo[];
+  /** FileSystemFileHandle from the File System Access API. Present only when the
+   *  file was imported via showDirectoryPicker and write-back is available. */
+  fileHandle?: FileSystemFileHandle;
 }
 
 export interface SymbolInfo {

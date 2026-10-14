@@ -46,6 +46,7 @@ export const Sidebar: React.FC = () => {
     deleteFile,
     renameFile,
     loadExternalFiles,
+    openProjectFolder,
     masterPrompt,
   } = useIDE();
 
@@ -120,39 +121,10 @@ export const Sidebar: React.FC = () => {
   };
 
   const handleSelectFolder = async () => {
-    if ('showDirectoryPicker' in window) {
-      try {
-        // @ts-ignore File System Access API is not available in all lib.dom versions.
-        const directoryHandle = await window.showDirectoryPicker();
-        const loadedFiles: ProjectFile[] = [];
-
-        async function readDirectory(handle: any, currentPath: string) {
-          for await (const entry of handle.values()) {
-            if (entry.kind === 'file') {
-              if (!/\.(ts|tsx|js|jsx|json|c|h|cpp|py|md|html|css|yaml|txt)$/i.test(entry.name)) continue;
-              const file = await entry.getFile();
-              loadedFiles.push({
-                id: `file-${Math.random().toString(36).substring(2, 9)}`,
-                name: entry.name,
-                path: currentPath ? `${currentPath}/${entry.name}` : entry.name,
-                language: entry.name.split('.').pop() || 'typescript',
-                content: await file.text(),
-                isDirty: false,
-              });
-            } else if (entry.kind === 'directory' && !['node_modules', '.git', 'dist', '.vscode'].includes(entry.name)) {
-              await readDirectory(entry, currentPath ? `${currentPath}/${entry.name}` : entry.name);
-            }
-          }
-        }
-
-        await readDirectory(directoryHandle, '');
-        if (loadedFiles.length > 0) loadExternalFiles(loadedFiles, directoryHandle.name);
-        return;
-      } catch (error: any) {
-        if (error?.name === 'AbortError') return;
-      }
+    const opened = await openProjectFolder();
+    if (!opened) {
+      folderInputRef.current?.click();
     }
-    folderInputRef.current?.click();
   };
 
   const handleFolderInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -171,12 +143,14 @@ export const Sidebar: React.FC = () => {
 
       const reader = new FileReader();
       reader.onload = () => {
+        const fileContent = String(reader.result || '');
         loadedFiles.push({
           id: `file-${Math.random().toString(36).substring(2, 9)}`,
           name: file.name,
           path: relativePath,
           language: file.name.split('.').pop() || 'typescript',
-          content: String(reader.result || ''),
+          content: fileContent,
+          savedContent: fileContent,
           isDirty: false,
         });
 
