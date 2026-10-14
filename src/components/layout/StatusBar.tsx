@@ -3,8 +3,19 @@ import { GitBranch, RefreshCw } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 
 export const StatusBar: React.FC = () => {
-  const { masterPrompt, mcpServers, files, activeFileId } = useIDE();
+  const {
+    masterPrompt,
+    mcpServers,
+    files,
+    activeFileId,
+    gitBranch,
+    stagedFileIds,
+    setSidebarView,
+    setIsSidebarVisible,
+  } = useIDE();
   const activeFile = files.find((file) => file.id === activeFileId);
+
+  const changedCount = files.filter((f) => f.isDirty || f.isModified).length + stagedFileIds.length;
 
   const languageLabel = activeFile
     ? activeFile.name.endsWith('.c') || activeFile.name.endsWith('.h')
@@ -28,19 +39,38 @@ export const StatusBar: React.FC = () => {
 
   return (
     <footer
-      className="flex h-7 shrink-0 items-center justify-between gap-4 border-t border-ide-border bg-ide-shell px-3 font-mono text-[10px] text-ide-muted"
+      className="flex h-7 shrink-0 items-center justify-between gap-4 border-t border-ide-border bg-ide-shell px-3 font-mono text-[10px] text-ide-muted select-none"
       data-purpose="ide-status-bar"
     >
       <div className="flex min-w-0 items-center gap-3">
-        <span className="flex items-center gap-1.5 whitespace-nowrap text-ide-text" title="Current git branch">
-          <GitBranch className="h-3 w-3 text-ide-subtle" aria-hidden="true" />
-          main
-        </span>
+        <button
+          type="button"
+          onClick={() => {
+            setSidebarView('git');
+            setIsSidebarVisible(true);
+          }}
+          className="ide-focus-ring flex items-center gap-1.5 whitespace-nowrap text-ide-text hover:text-ide-strong transition-colors"
+          title={`Git Branch: ${gitBranch} (Click to open Source Control)`}
+        >
+          <GitBranch className="h-3 w-3 text-ide-focus" aria-hidden="true" />
+          <span>{gitBranch}</span>
+          {changedCount > 0 && (
+            <span className="text-ide-amber font-bold">*{changedCount}</span>
+          )}
+        </button>
         <span className="text-ide-border-strong" aria-hidden="true">|</span>
-        <span className="flex items-center gap-1.5 whitespace-nowrap text-ide-subtle" title="Synchronize changes">
+        <button
+          type="button"
+          onClick={() => {
+            setSidebarView('git');
+            setIsSidebarVisible(true);
+          }}
+          className="flex items-center gap-1.5 whitespace-nowrap text-ide-subtle hover:text-ide-text"
+          title="Local repository synced with workspace storage"
+        >
           <RefreshCw className="h-3 w-3" aria-hidden="true" />
-          Sync
-        </span>
+          <span>Sync</span>
+        </button>
         <span className="hidden items-center gap-2 whitespace-nowrap sm:flex" aria-label="Diagnostics: zero errors and zero warnings">
           <span>Errors 0</span>
           <span>Warnings 0</span>
