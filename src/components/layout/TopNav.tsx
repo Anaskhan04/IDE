@@ -26,6 +26,7 @@ export const TopNav: React.FC = () => {
     setIsCommandPaletteOpen,
     setSidebarView,
     setIsSidebarVisible,
+    toggleProblemsPanel,
   } = useIDE();
 
   const [searchInitialQuery, setSearchInitialQuery] = useState('');
@@ -35,6 +36,13 @@ export const TopNav: React.FC = () => {
   // Global keyboard shortcuts for Search / Quick Open / Command Palette
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Ctrl+Shift+M -> Toggle Problems Panel
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'm') {
+        event.preventDefault();
+        toggleProblemsPanel();
+        return;
+      }
+
       // Ctrl+Shift+P or F1 -> Command Palette
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'p') {
         event.preventDefault();
@@ -63,7 +71,7 @@ export const TopNav: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setIsCommandPaletteOpen]);
+  }, [setIsCommandPaletteOpen, toggleProblemsPanel]);
 
   const handleOpenSearch = (mode: 'all' | 'files' | 'symbols' | 'commands' = 'all', query = '') => {
     setSearchMode(mode);

@@ -12,9 +12,10 @@ import { KnowledgeGraphCanvas } from './components/knowledge-graph/KnowledgeGrap
 import { ValidationRunner } from './components/validation/ValidationRunner';
 import { ModelGatewayChat } from './components/model-gateway/ModelGatewayChat';
 import { ModelSwitcherModal } from './components/model-gateway/ModelSwitcherModal';
+import { ProblemsPanel } from './components/problems/ProblemsPanel';
 
 export const AppContent: React.FC = () => {
-  const { activeView, isCopilotOpen } = useIDE();
+  const { activeView, isCopilotOpen, isProblemsPanelOpen } = useIDE();
 
   return (
     <div className="flex h-screen w-screen select-none flex-col overflow-hidden bg-ide-bg font-sans text-[13px] text-ide-text antialiased">
@@ -34,6 +35,7 @@ export const AppContent: React.FC = () => {
             {activeView === 'validation' && <ValidationRunner />}
             {!['editor', 'cia', 'mcp', 'graph', 'validation'].includes(activeView) && <CodeEditor />}
           </div>
+          {isProblemsPanelOpen && <ProblemsPanel />}
         </main>
 
         {isCopilotOpen && <ModelGatewayChat />}

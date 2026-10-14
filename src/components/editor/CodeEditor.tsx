@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ChevronRight, FilePlus, FolderOpen, Play, Save, Search, X } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
+import type { WorkspaceDiagnostic } from '../../types/ide';
 
 const getLanguageMark = (fileName: string) => {
   if (fileName.endsWith('.c') || fileName.endsWith('.h')) return 'C';
@@ -40,6 +41,7 @@ export const CodeEditor: React.FC = () => {
     editorSettings,
     targetEditorLine,
     setTargetEditorLine,
+    diagnostics,
   } = useIDE();
 
   const activeFile = files.find((file) => file.id === activeFileId);
@@ -47,6 +49,20 @@ export const CodeEditor: React.FC = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  // Map diagnostics for current file by line
+  const diagnosticsByLine = useMemo(() => {
+    const map = new Map<number, WorkspaceDiagnostic[]>();
+    if (!activeFile) return map;
+    diagnostics
+      .filter((d) => d.fileId === activeFile.id)
+      .forEach((d) => {
+        const list = map.get(d.line) || [];
+        list.push(d);
+        map.set(d.line, list);
+      });
+    return map;
+  }, [diagnostics, activeFile]);
 
   const handleScroll = (event: React.UIEvent<HTMLTextAreaElement>) => {
     if (lineNumbersRef.current) {
@@ -405,18 +421,44 @@ export const CodeEditor: React.FC = () => {
             }}
             aria-hidden="true"
           >
-            {lines.map((_, index) => (
-              <div
-                key={index}
-                style={{
-                  height: `${editorSettings.fontSize * 1.6}px`,
-                  lineHeight: `${editorSettings.fontSize * 1.6}px`,
-                }}
-                className={`${index + 1 === cursorPos.line ? 'text-ide-text font-bold' : ''}`}
-              >
-                {index + 1}
-              </div>
-            ))}
+            {lines.map((_, index) => {
+              const lineNum = index + 1;
+              const lineDiags = diagnosticsByLine.get(lineNum);
+              const hasError = lineDiags?.some((d) => d.severity === 'error');
+              const hasWarning = lineDiags?.some((d) => d.severity === 'warning');
+
+              return (
+                <div
+                  key={index}
+                  style={{
+                    height: `${editorSettings.fontSize * 1.6}px`,
+                    lineHeight: `${editorSettings.fontSize * 1.6}px`,
+                  }}
+                  title={
+                    lineDiags
+                      ? lineDiags.map((d) => `[${d.severity.toUpperCase()}] ${d.message}`).join('\n')
+                      : undefined
+                  }
+                  className={`flex items-center justify-end ${
+                    hasError
+                      ? 'text-ide-rose font-bold'
+                      : hasWarning
+                        ? 'text-ide-amber font-bold'
+                        : lineNum === cursorPos.line
+                          ? 'text-ide-text font-bold'
+                          : ''
+                  }`}
+                >
+                  {hasError && (
+                    <span className="mr-1 h-1.5 w-1.5 shrink-0 rounded-full bg-ide-rose" aria-hidden="true" />
+                  )}
+                  {!hasError && hasWarning && (
+                    <span className="mr-1 h-1.5 w-1.5 shrink-0 rounded-full bg-ide-amber" aria-hidden="true" />
+                  )}
+                  <span>{lineNum}</span>
+                </div>
+              );
+            })}
           </div>
         )}
 

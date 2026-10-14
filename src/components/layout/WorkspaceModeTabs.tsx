@@ -44,7 +44,13 @@ const modes: WorkspaceMode[] = [
 ];
 
 export const WorkspaceModeTabs: React.FC = () => {
-  const { activeView, setActiveView } = useIDE();
+  const {
+    activeView,
+    setActiveView,
+    diagnosticsSummary,
+    toggleProblemsPanel,
+    isProblemsPanelOpen,
+  } = useIDE();
   const selectedMode = modes.some((mode) => mode.id === activeView) ? activeView : 'editor';
 
   return (
@@ -76,9 +82,34 @@ export const WorkspaceModeTabs: React.FC = () => {
           );
         })}
       </div>
-      <div className="ml-auto hidden items-center gap-2 text-[10px] font-mono text-ide-subtle 2xl:flex">
-        <span className="h-1.5 w-1.5 bg-ide-amber" aria-hidden="true" />
-        <span>Changes are analyzed before tests run</span>
+      <div className="ml-auto flex items-center gap-3">
+        <button
+          type="button"
+          onClick={toggleProblemsPanel}
+          className={`ide-focus-ring flex items-center gap-1.5 rounded-ide-control border px-2 py-1 text-[11px] font-medium transition-colors ${
+            isProblemsPanelOpen
+              ? 'border-ide-focus bg-ide-selected text-ide-strong'
+              : 'border-ide-border bg-ide-surface/60 text-ide-muted hover:bg-ide-hover hover:text-ide-text'
+          }`}
+          title="Toggle Problems & Diagnostics panel (Ctrl+Shift+M)"
+        >
+          <span className="font-sans">Problems</span>
+          <span
+            className={`rounded px-1.5 py-0.2 font-mono text-[10px] font-bold ${
+              diagnosticsSummary.errorCount > 0
+                ? 'bg-ide-rose/20 text-ide-rose border border-ide-rose/40'
+                : diagnosticsSummary.warningCount > 0
+                  ? 'bg-ide-amber/20 text-ide-amber border border-ide-amber/40'
+                  : 'bg-ide-bg text-ide-subtle border border-ide-border'
+            }`}
+          >
+            {diagnosticsSummary.total}
+          </span>
+        </button>
+        <div className="hidden items-center gap-2 text-[10px] font-mono text-ide-subtle 2xl:flex border-l border-ide-border pl-3">
+          <span className="h-1.5 w-1.5 bg-ide-amber" aria-hidden="true" />
+          <span>AST engine synced</span>
+        </div>
       </div>
     </nav>
   );
