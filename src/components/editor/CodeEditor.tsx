@@ -37,6 +37,9 @@ export const CodeEditor: React.FC = () => {
     pendingReconnect,
     reconnectWorkspace,
     dismissReconnect,
+    editorSettings,
+    targetEditorLine,
+    setTargetEditorLine,
   } = useIDE();
 
   const activeFile = files.find((file) => file.id === activeFileId);
@@ -61,6 +64,31 @@ export const CodeEditor: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeFile, saveFile]);
+
+  // Jump to target line when navigated from Global Search or Outline
+  useEffect(() => {
+    if (targetEditorLine && textareaRef.current && activeFile) {
+      const allLines = activeFile.content.split('\n');
+      const targetIdx = Math.max(0, Math.min(targetEditorLine - 1, allLines.length - 1));
+
+      let charOffset = 0;
+      for (let i = 0; i < targetIdx; i++) {
+        charOffset += allLines[i].length + 1;
+      }
+
+      textareaRef.current.focus();
+      textareaRef.current.setSelectionRange(charOffset, charOffset + allLines[targetIdx].length);
+
+      const approxLineHeight = editorSettings.fontSize * 1.6;
+      textareaRef.current.scrollTop = Math.max(0, targetIdx * approxLineHeight - 120);
+      if (lineNumbersRef.current) {
+        lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
+      }
+
+      setCursorPos({ line: targetIdx + 1, col: 1 });
+      setTargetEditorLine(null);
+    }
+  }, [targetEditorLine, activeFile, setTargetEditorLine, editorSettings.fontSize]);
 
   const handleSelectFolder = async () => {
     const opened = await openProjectFolder();
@@ -361,22 +389,32 @@ export const CodeEditor: React.FC = () => {
         </div>
       )}
 
-      <div className="relative flex h-full min-h-0 flex-1 overflow-hidden font-mono text-[12px] leading-5">
-        <div
-          ref={lineNumbersRef}
-          className="h-full min-h-0 shrink-0 overflow-hidden bg-ide-bg px-2 pt-2 pb-32 text-right text-[11px] text-ide-subtle select-none"
-          style={{ width: `${Math.max(48, String(lines.length).length * 8 + 20)}px` }}
-          aria-hidden="true"
-        >
-          {lines.map((_, index) => (
-            <div
-              key={index}
-              className={`h-5 leading-5 ${index + 1 === cursorPos.line ? 'text-ide-text font-bold' : ''}`}
-            >
-              {index + 1}
-            </div>
-          ))}
-        </div>
+      <div className="relative flex h-full min-h-0 flex-1 overflow-hidden font-mono leading-relaxed">
+        {editorSettings.lineNumbers && (
+          <div
+            ref={lineNumbersRef}
+            className="h-full min-h-0 shrink-0 overflow-hidden bg-ide-bg px-2 pt-2 pb-32 text-right text-ide-subtle select-none"
+            style={{
+              width: `${Math.max(48, String(lines.length).length * 8 + 20)}px`,
+              fontSize: `${editorSettings.fontSize}px`,
+              lineHeight: `${editorSettings.fontSize * 1.6}px`,
+            }}
+            aria-hidden="true"
+          >
+            {lines.map((_, index) => (
+              <div
+                key={index}
+                style={{
+                  height: `${editorSettings.fontSize * 1.6}px`,
+                  lineHeight: `${editorSettings.fontSize * 1.6}px`,
+                }}
+                className={`${index + 1 === cursorPos.line ? 'text-ide-text font-bold' : ''}`}
+              >
+                {index + 1}
+              </div>
+            ))}
+          </div>
+        )}
 
         <textarea
           ref={textareaRef}
@@ -390,13 +428,19 @@ export const CodeEditor: React.FC = () => {
           onKeyUp={(event) => updateCursorInfo(event.currentTarget)}
           onClick={(event) => updateCursorInfo(event.currentTarget)}
           spellCheck={false}
-          wrap="off"
+          wrap={editorSettings.wordWrap ? 'on' : 'off'}
           aria-label={`Editing ${activeFile.path}`}
-          className="h-full min-h-0 min-w-0 flex-1 resize-none overflow-auto whitespace-pre border-0 bg-transparent p-2 pb-32 font-mono text-[12px] leading-5 text-ide-text outline-none selection:bg-ide-focus/30"
-          style={{ tabSize: 2 }}
+          className={`h-full min-h-0 min-w-0 flex-1 resize-none overflow-auto border-0 bg-transparent p-2 pb-32 font-mono text-ide-text outline-none selection:bg-ide-focus/30 ${
+            editorSettings.wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'
+          }`}
+          style={{
+            tabSize: editorSettings.tabSize,
+            fontSize: `${editorSettings.fontSize}px`,
+            lineHeight: `${editorSettings.fontSize * 1.6}px`,
+          }}
         />
 
-        {lines.length > 8 && (
+        {editorSettings.showMinimap && lines.length > 8 && (
           <div className="hidden h-full min-h-0 w-16 shrink-0 overflow-hidden border-l border-ide-border bg-ide-shell/70 p-1.5 select-none lg:block" data-purpose="code-minimap" aria-hidden="true">
             {lines.slice(0, 80).map((line, index) => {
               const trimmed = line.trim();

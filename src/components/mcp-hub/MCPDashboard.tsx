@@ -106,7 +106,19 @@ export const MCPDashboard: React.FC = () => {
     await new Promise((resolve) => setTimeout(resolve, 800));
 
     let mockResponse: Record<string, unknown>;
-    if (selectedTool.name === 'run_e2e_checkout_flow') {
+    if (selectedTool.name === 'create_or_update_pr' || selectedServer.id === 'mcp-github') {
+      mockResponse = {
+        jsonrpc: '2.0',
+        id: 'call_mcp_auth_err',
+        error: {
+          code: 401,
+          message: 'Authentication Required: GITHUB_PERSONAL_ACCESS_TOKEN is not configured.',
+          details: 'IntelliCode is operating in local repository mode on branch "anas-workspace-v1". Remote pull request creation and GitHub synchronization require a configured Personal Access Token.',
+          localBranch: 'anas-workspace-v1',
+          actionRequired: 'Configure GITHUB_PERSONAL_ACCESS_TOKEN in environment settings or .env file.',
+        },
+      };
+    } else if (selectedTool.name === 'run_e2e_checkout_flow') {
       mockResponse = {
         jsonrpc: '2.0',
         id: 'call_mcp_9012',
@@ -142,7 +154,7 @@ export const MCPDashboard: React.FC = () => {
           tool: selectedTool.name,
           server: selectedServer.name,
           timestamp: new Date().toISOString(),
-          data: 'Simulated MCP operation completed with zero authentication prompt.',
+          data: 'Local AST / in-memory operation completed successfully.',
         },
       };
     }
@@ -178,13 +190,18 @@ export const MCPDashboard: React.FC = () => {
           {isVaultOpen && (
             <div className="grid border-t border-ide-border sm:grid-cols-3">
               {[
-                ['GITHUB_PERSONAL_ACCESS_TOKEN', 'ghp_••••••••••••94b'],
-                ['POSTGRES_CONNECTION_URI', 'postgresql://•••••••:5432'],
-                ['STRIPE_SECRET_KEY', 'sk_test_•••••••••88f'],
-              ].map(([name, value]) => (
+                ['GITHUB_PERSONAL_ACCESS_TOKEN', 'Unconfigured (Requires token for remote sync)'],
+                ['POSTGRES_CONNECTION_URI', 'Unconfigured (Local mock sandbox active)'],
+                ['STRIPE_SECRET_KEY', 'Unconfigured (Offline test environment)'],
+              ].map(([name, desc]) => (
                 <div key={name} className="flex items-center justify-between gap-3 border-b border-ide-border p-3 font-mono text-[10px] sm:border-b-0 sm:border-r last:border-r-0">
-                  <div className="min-w-0"><span className="block truncate text-ide-subtle">{name}</span><span className="mt-1 block truncate text-ide-text">{value}</span></div>
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-ide-emerald" aria-label="Configured" />
+                  <div className="min-w-0">
+                    <span className="block truncate text-ide-subtle">{name}</span>
+                    <span className="mt-1 block truncate text-ide-amber">{desc}</span>
+                  </div>
+                  <span className="rounded bg-ide-amber/15 px-1.5 py-0.5 text-[9px] font-semibold text-ide-amber shrink-0">
+                    Unset
+                  </span>
                 </div>
               ))}
             </div>
