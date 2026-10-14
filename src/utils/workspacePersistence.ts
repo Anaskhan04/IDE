@@ -3,10 +3,13 @@ import type { ProjectId } from '../context/IDEContext';
 export interface WorkspaceMeta {
   projectId: ProjectId;
   folderName: string;
+  workspacePath?: string;
+  repoRoot?: string;
   activeFilePath?: string;
   openFilePaths?: string[];
   lastSavedAt?: number;
 }
+
 
 export interface PendingReconnect {
   handle: FileSystemDirectoryHandle;

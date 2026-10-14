@@ -25,6 +25,25 @@ export interface GitCommit {
   filesCount?: number;
 }
 
+export interface GitFileItem {
+  path: string;
+  name: string;
+  status: string; // 'M' | 'A' | 'D' | 'R' | 'U' | '??'
+  isStaged: boolean;
+  oldPath?: string;
+}
+
+export interface GitRepoStatus {
+  isGit: boolean;
+  repoRoot?: string;
+  workspacePath?: string;
+  branch?: string;
+  stagedFiles: GitFileItem[];
+  unstagedFiles: GitFileItem[];
+  error?: string;
+}
+
+
 export interface SearchMatch {
   fileId: string;
   filePath: string;
@@ -35,6 +54,54 @@ export interface SearchMatch {
   matchEnd: number;
   isSymbol?: boolean;
   symbolKind?: string;
+}
+
+export type DiagnosticSeverity = 'error' | 'warning' | 'info' | 'hint';
+
+export type DiagnosticSource =
+  | 'typescript'
+  | 'json'
+  | 'html'
+  | 'css'
+  | 'markdown'
+  | 'python'
+  | 'c'
+  | 'syntax';
+
+export interface WorkspaceDiagnostic {
+  id: string;
+  fileId: string;
+  filePath: string;
+  fileName: string;
+  line: number;
+  column: number;
+  endLine?: number;
+  endColumn?: number;
+  message: string;
+  severity: DiagnosticSeverity;
+  source: DiagnosticSource;
+  code?: string | number;
+  relatedInformation?: string;
+}
+
+export interface LanguageProviderInfo {
+  id: string;
+  language: string;
+  name: string;
+  extensions: string[];
+  status: 'active' | 'unsupported';
+  description: string;
+  capabilities: string[];
+  externalCheckerRequired?: boolean;
+}
+
+export interface DiagnosticsSummary {
+  errorCount: number;
+  warningCount: number;
+  infoCount: number;
+  total: number;
+  checkedFilesCount: number;
+  unsupportedFilesCount: number;
 }
 
 export interface CommandItem {
