@@ -33,6 +33,10 @@ export const CodeEditor: React.FC = () => {
     runTests,
     isExecutingTests,
     setActiveView,
+    isRestoringWorkspace,
+    pendingReconnect,
+    reconnectWorkspace,
+    dismissReconnect,
   } = useIDE();
 
   const activeFile = files.find((file) => file.id === activeFileId);
@@ -109,6 +113,25 @@ export const CodeEditor: React.FC = () => {
           multiple
           className="hidden"
         />
+
+        {saveError && (
+          <div className="flex min-h-[34px] shrink-0 items-center justify-between gap-3 border-b border-ide-rose/40 bg-ide-panel px-3 font-mono text-[10px] text-ide-rose" role="alert">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-ide-rose" aria-hidden="true" />
+              <span>{saveError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={clearSaveError}
+              className="ide-focus-ring flex h-6 w-6 items-center justify-center text-ide-muted hover:text-ide-text"
+              aria-label="Dismiss save error"
+              title="Dismiss error"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-10">
           <div className="w-full max-w-[540px] border-l border-ide-border-strong pl-6">
             <div className="mb-6 flex items-center gap-3">
@@ -124,10 +147,48 @@ export const CodeEditor: React.FC = () => {
               </div>
             </div>
 
+            {pendingReconnect && (
+              <div className="mb-6 border border-ide-amber/40 bg-ide-amber/10 p-4 font-sans text-xs">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 shrink-0 text-ide-amber mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-sm font-semibold text-ide-strong">Reconnect "{pendingReconnect.folderName}"</h2>
+                    <p className="mt-1 text-xs text-ide-muted leading-relaxed">
+                      Your browser requires permission to access the local folder after a refresh. Click Reconnect to resume editing your project files.
+                    </p>
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => reconnectWorkspace()}
+                        className="ide-focus-ring flex items-center gap-1.5 bg-ide-focus px-3 py-1.5 text-xs font-semibold text-white hover:bg-ide-focus/90"
+                      >
+                        <FolderOpen className="h-3.5 w-3.5" />
+                        Reconnect Folder
+                      </button>
+                      <button
+                        type="button"
+                        onClick={dismissReconnect}
+                        className="ide-focus-ring border border-ide-border px-3 py-1.5 text-xs text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isRestoringWorkspace && (
+              <div className="mb-6 flex items-center gap-2.5 border border-ide-border bg-ide-surface px-4 py-3 font-mono text-xs text-ide-muted">
+                <div className="h-2.5 w-2.5 rounded-full bg-ide-focus animate-pulse" />
+                <span>Restoring workspace from disk...</span>
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-2 border-y border-ide-border py-4">
               <button
                 type="button"
-                onClick={() => createFile('index.ts', 'src')}
+                onClick={() => createFile('index.ts', '')}
                 className="ide-focus-ring ide-control inline-flex min-h-[34px] items-center gap-2 bg-ide-focus px-3 text-xs font-semibold text-white hover:bg-ide-focus/85"
               >
                 <FilePlus className="h-3.5 w-3.5" aria-hidden="true" />
@@ -195,7 +256,18 @@ export const CodeEditor: React.FC = () => {
             </div>
           );
         })}
-        <button type="button" onClick={() => createFile('module.ts', 'src')} className="ide-focus-ring flex h-full w-9 shrink-0 items-center justify-center text-ide-subtle hover:bg-ide-hover hover:text-ide-text" title="New file tab" aria-label="New file tab">
+        <button
+          type="button"
+          onClick={() => {
+            const parent = activeFile && activeFile.path.includes('/')
+              ? activeFile.path.split('/').slice(0, -1).join('/')
+              : '';
+            createFile('module.ts', parent);
+          }}
+          className="ide-focus-ring flex h-full w-9 shrink-0 items-center justify-center text-ide-subtle hover:bg-ide-hover hover:text-ide-text"
+          title="New file tab"
+          aria-label="New file tab"
+        >
           <FilePlus className="h-3.5 w-3.5" />
         </button>
       </div>

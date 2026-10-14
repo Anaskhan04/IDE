@@ -33,8 +33,24 @@ import {
   writeFileHandle, 
   downloadFile, 
   readDirectoryRecursive, 
-  createFileInDirectory 
+  createFileInDirectory,
+  createFileOnDisk,
+  renameFileOnDisk,
+  deleteFileOnDisk,
+  verifyDirectoryPermission
 } from '../utils/fsAccess';
+import {
+  PendingReconnect,
+  WorkspaceMeta,
+  saveStoredDirectoryHandle,
+  getStoredDirectoryHandle,
+  clearStoredDirectoryHandle,
+  saveWorkspaceMeta,
+  getWorkspaceMeta,
+  clearWorkspaceMeta
+} from '../utils/workspacePersistence';
+
+export type { PendingReconnect } from '../utils/workspacePersistence';
 
 export type ProjectId = 'codebase-memory-mcp' | 'novastore' | 'custom';
 
@@ -86,9 +102,9 @@ interface IDEContextType {
   traceCallPath: (symbolName: string, direction: 'inbound' | 'outbound', depth: number) => Promise<TracePathResult>;
 
   // VS Code / Antigravity File System Operations
-  createFile: (name: string, folderPath?: string, content?: string) => void;
-  deleteFile: (fileId: string) => void;
-  renameFile: (fileId: string, newName: string) => void;
+  createFile: (name: string, folderPath?: string, content?: string) => Promise<ProjectFile | null>;
+  deleteFile: (fileId: string) => Promise<boolean>;
+  renameFile: (fileId: string, newName: string) => Promise<boolean>;
   /** Save the file to disk (via File System Access API) if a handle is available,
    *  or trigger a browser download as a fallback. Clears isDirty on success. */
   saveFile: (fileId: string) => Promise<void>;
@@ -101,6 +117,12 @@ interface IDEContextType {
   /** Open a local folder using the File System Access API with handle retention.
    *  Returns true if handled/opened, or false if unsupported / should trigger input fallback. */
   openProjectFolder: () => Promise<boolean>;
+
+  // Workspace restoration & permission handling
+  isRestoringWorkspace: boolean;
+  pendingReconnect: PendingReconnect | null;
+  reconnectWorkspace: () => Promise<boolean>;
+  dismissReconnect: () => void;
 }
 
 const IDEContext = createContext<IDEContextType | undefined>(undefined);
@@ -140,6 +162,8 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isTracingPath, setIsTracingPath] = useState(false);
 
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [isRestoringWorkspace, setIsRestoringWorkspace] = useState<boolean>(false);
+  const [pendingReconnect, setPendingReconnect] = useState<PendingReconnect | null>(null);
   const directoryHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
   const clearSaveError = () => setSaveError(null);
 
@@ -159,7 +183,15 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const setCurrentProjectId = (id: ProjectId) => {
     setCurrentProjectIdState(id);
     directoryHandleRef.current = null;
+    setPendingReconnect(null);
     setSaveError(null);
+    clearStoredDirectoryHandle();
+    saveWorkspaceMeta({
+      projectId: id,
+      folderName: '',
+      openFilePaths: [],
+      lastSavedAt: Date.now()
+    });
     if (id === 'codebase-memory-mcp') {
       setFiles(CBM_REPO_FILES.map(f => ({
         ...f,
@@ -299,20 +331,44 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  const createFile = (name: string, folderPath?: string, content: string = '') => {
-    const cleanName = name.trim();
-    if (!cleanName) return;
-    const path = folderPath ? `${folderPath}/${cleanName}` : (cleanName.includes('/') ? cleanName : `src/${cleanName}`);
-    const ext = cleanName.split('.').pop() || 'ts';
-    const initialContent = content || `// ${cleanName}\n// Created in IntelliCode\n\n`;
+  const createFile = async (
+    name: string, 
+    folderPath?: string, 
+    content: string = ''
+  ): Promise<ProjectFile | null> => {
+    const cleanFolder = (folderPath || '').trim().replace(/^\/+|\/+$/g, '');
+    const cleanName = name.trim().replace(/^\/+/g, '');
+    if (!cleanName) return null;
+    const path = cleanFolder ? `${cleanFolder}/${cleanName}` : cleanName;
+    const fileName = cleanName.split('/').pop() || cleanName;
+    const ext = fileName.split('.').pop() || 'ts';
+    const initialContent = content || `// ${fileName}\n// Created in IntelliCode\n\n`;
+
+    setSaveError(null);
+    let fileHandle: FileSystemFileHandle | undefined;
+
+    // If an active project directory handle is present, create the file on disk first
+    if (directoryHandleRef.current) {
+      try {
+        const result = await createFileOnDisk(directoryHandleRef.current, path, initialContent);
+        fileHandle = result.fileHandle;
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setSaveError(`Failed to create "${fileName}" on disk: ${errorMsg}`);
+        console.error('Could not create file on disk:', err);
+        return null;
+      }
+    }
+
     const newFile: ProjectFile = {
       id: 'file-' + Date.now(),
-      name: cleanName.split('/').pop() || cleanName,
+      name: fileName,
       path,
       language: ext === 'c' || ext === 'h' ? 'c' : ext === 'py' ? 'python' : ext === 'json' ? 'json' : 'typescript',
       content: initialContent,
       savedContent: initialContent,
-      isDirty: false
+      isDirty: false,
+      fileHandle
     };
 
     setFiles(prev => {
@@ -330,24 +386,42 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return updated;
     });
 
-    setOpenFileIds(prev => [...prev, newFile.id]);
+    setOpenFileIds(prev => prev.includes(newFile.id) ? prev : [...prev, newFile.id]);
     setActiveFileId(newFile.id);
-
-    // If a project directory handle is active, also create the file on disk
-    if (directoryHandleRef.current) {
-      createFileInDirectory(directoryHandleRef.current, path, newFile.content)
-        .then(handle => {
-          if (handle) {
-            setFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, fileHandle: handle } : f));
-          }
-        })
-        .catch(err => {
-          console.warn('Could not create file on disk immediately:', err);
-        });
-    }
+    return newFile;
   };
 
-  const deleteFile = (fileId: string) => {
+  const deleteFile = async (fileId: string): Promise<boolean> => {
+    const file = files.find(f => f.id === fileId);
+    if (!file) return false;
+
+    // Prevent accidental loss of unsaved changes with explicit warning
+    const confirmMessage = file.isDirty
+      ? `"${file.name}" has unsaved changes.\nAre you sure you want to delete this file from disk?`
+      : `Are you sure you want to delete "${file.name}"?`;
+
+    if (!window.confirm(confirmMessage)) {
+      return false;
+    }
+
+    setSaveError(null);
+
+    // If an active project directory handle is present, perform actual disk deletion
+    if (directoryHandleRef.current) {
+      try {
+        await deleteFileOnDisk(directoryHandleRef.current, file.path);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setSaveError(`Failed to delete "${file.name}" from disk: ${errorMsg}`);
+        console.error('Error deleting file on disk:', err);
+        return false;
+      }
+    } else if (file.fileHandle) {
+      setSaveError(`Cannot delete "${file.name}" on disk: root directory handle is not available.`);
+      return false;
+    }
+
+    // Disk deletion succeeded (or mock mode): update state
     setFiles(prev => {
       const updated = prev.filter(f => f.id !== fileId);
       try {
@@ -360,17 +434,77 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return updated;
     });
     closeFile(fileId);
+    return true;
   };
 
-  const renameFile = (fileId: string, newName: string) => {
-    const clean = newName.trim();
-    if (!clean) return;
-    setFiles(prev => prev.map(f => {
-      if (f.id !== fileId) return f;
-      const parts = f.path.split('/');
-      parts[parts.length - 1] = clean;
-      return { ...f, name: clean, path: parts.join('/') };
-    }));
+  const renameFile = async (fileId: string, newName: string): Promise<boolean> => {
+    const file = files.find(f => f.id === fileId);
+    if (!file) return false;
+    const cleanName = newName.trim();
+    if (!cleanName || cleanName === file.name) return false;
+
+    setSaveError(null);
+
+    let updatedHandle = file.fileHandle;
+    const parts = file.path.split('/');
+    parts[parts.length - 1] = cleanName;
+    let newPath = parts.join('/');
+
+    // If an active project directory handle is present, perform actual disk rename
+    if (directoryHandleRef.current) {
+      try {
+        const result = await renameFileOnDisk(
+          directoryHandleRef.current,
+          file.path,
+          cleanName,
+          file.fileHandle
+        );
+        updatedHandle = result.newHandle;
+        newPath = result.newPath;
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setSaveError(`Failed to rename "${file.name}" on disk: ${errorMsg}`);
+        console.error('Error renaming file on disk:', err);
+        return false;
+      }
+    } else if (file.fileHandle) {
+      if (typeof (file.fileHandle as any).move === 'function') {
+        try {
+          await (file.fileHandle as any).move(cleanName);
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          setSaveError(`Failed to rename "${file.name}" on disk: ${errorMsg}`);
+          return false;
+        }
+      } else {
+        setSaveError(`Cannot rename "${file.name}" on disk: move is not supported in this browser without a directory handle.`);
+        return false;
+      }
+    }
+
+    // Disk rename succeeded (or mock mode): update state
+    const ext = cleanName.split('.').pop() || 'ts';
+    setFiles(prev => {
+      const updated = prev.map(f => {
+        if (f.id !== fileId) return f;
+        return {
+          ...f,
+          name: cleanName,
+          path: newPath,
+          language: ext === 'c' || ext === 'h' ? 'c' : ext === 'py' ? 'python' : ext === 'json' ? 'json' : 'typescript',
+          fileHandle: updatedHandle
+        };
+      });
+      try {
+        const { nodes, edges } = buildGraphFromFiles(updated);
+        if (nodes.length > 0) {
+          setGraphNodes(nodes);
+          setGraphEdges(edges);
+        }
+      } catch (e) {}
+      return updated;
+    });
+    return true;
   };
 
   const loadExternalFiles = (
@@ -380,6 +514,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ) => {
     if (newFiles.length === 0) return;
     directoryHandleRef.current = dirHandle || null;
+    setPendingReconnect(null);
     setSaveError(null);
     const initializedFiles = newFiles.map(f => ({
       ...f,
@@ -390,12 +525,24 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setOpenFileIds([initializedFiles[0].id]);
     setActiveFileId(initializedFiles[0].id);
     setCurrentProjectIdState('custom');
+    const resolvedFolderName = folderName || (dirHandle ? dirHandle.name : 'Opened Workspace');
     setMasterPrompt(prev => ({
       ...prev,
-      projectName: folderName || (dirHandle ? dirHandle.name : 'Opened Workspace'),
+      projectName: resolvedFolderName,
       lastSynced: 'Just now (Loaded from folder)',
       astVersion: 'AST-' + Math.random().toString(36).substring(2, 7).toUpperCase()
     }));
+
+    if (dirHandle) {
+      saveStoredDirectoryHandle(dirHandle, resolvedFolderName);
+      saveWorkspaceMeta({
+        projectId: 'custom',
+        folderName: resolvedFolderName,
+        activeFilePath: initializedFiles[0].path,
+        openFilePaths: [initializedFiles[0].path],
+        lastSavedAt: Date.now()
+      });
+    }
 
     // Generate dynamic Knowledge Graph from actual loaded files!
     try {
@@ -428,6 +575,231 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('showDirectoryPicker failed:', err);
       return false;
     }
+  };
+
+  // Protect unsaved changes before page reload or navigation
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      const hasDirtyFiles = files.some(file => file.isDirty);
+      if (hasDirtyFiles) {
+        event.preventDefault();
+        event.returnValue = '';
+        return '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [files]);
+
+  // Keep workspace navigation metadata synchronized in custom folder mode
+  useEffect(() => {
+    if (currentProjectId === 'custom' && directoryHandleRef.current && files.length > 0) {
+      const activeFile = files.find(f => f.id === activeFileId);
+      const openFiles = files.filter(f => openFileIds.includes(f.id));
+      saveWorkspaceMeta({
+        projectId: 'custom',
+        folderName: directoryHandleRef.current.name,
+        activeFilePath: activeFile ? activeFile.path : undefined,
+        openFilePaths: openFiles.map(f => f.path),
+        lastSavedAt: Date.now()
+      });
+    }
+  }, [currentProjectId, activeFileId, openFileIds, files]);
+
+  // Restore workspace from IndexedDB on initial load
+  useEffect(() => {
+    let isCancelled = false;
+
+    const restoreWorkspace = async () => {
+      const meta = getWorkspaceMeta();
+
+      // If user had selected a mock project, preserve that mock project
+      if (meta && (meta.projectId === 'codebase-memory-mcp' || meta.projectId === 'novastore')) {
+        setCurrentProjectId(meta.projectId);
+        return;
+      }
+
+      try {
+        const stored = await getStoredDirectoryHandle();
+        if (isCancelled || !stored) return;
+
+        setIsRestoringWorkspace(true);
+        const perm = await verifyDirectoryPermission(stored.handle, false);
+
+        if (perm === 'granted') {
+          try {
+            const loadedFiles = await readDirectoryRecursive(stored.handle);
+            if (isCancelled) return;
+
+            if (loadedFiles.length > 0) {
+              directoryHandleRef.current = stored.handle;
+              setCurrentProjectIdState('custom');
+              setSaveError(null);
+              setFiles(loadedFiles);
+
+              // Restore open tabs and active file, validating against actual disk files
+              const validOpenIds: string[] = [];
+              if (meta?.openFilePaths && meta.openFilePaths.length > 0) {
+                for (const p of meta.openFilePaths) {
+                  const match = loadedFiles.find(f => f.path === p);
+                  if (match && !validOpenIds.includes(match.id)) {
+                    validOpenIds.push(match.id);
+                  }
+                }
+              }
+              if (validOpenIds.length === 0 && loadedFiles.length > 0) {
+                validOpenIds.push(loadedFiles[0].id);
+              }
+              setOpenFileIds(validOpenIds);
+
+              let validActiveId = '';
+              if (meta?.activeFilePath) {
+                const match = loadedFiles.find(f => f.path === meta.activeFilePath);
+                if (match) {
+                  validActiveId = match.id;
+                }
+              }
+              if (!validActiveId) {
+                validActiveId = validOpenIds[0] || '';
+              }
+              setActiveFileId(validActiveId);
+
+              setMasterPrompt(prev => ({
+                ...prev,
+                projectName: stored.folderName,
+                lastSynced: 'Just now (Restored from folder)',
+                astVersion: 'AST-' + Math.random().toString(36).substring(2, 7).toUpperCase()
+              }));
+
+              try {
+                const { nodes, edges } = buildGraphFromFiles(loadedFiles);
+                if (nodes.length > 0) {
+                  setGraphNodes(nodes);
+                  setGraphEdges(edges);
+                  setSelectedGraphNode(nodes[0]);
+                }
+              } catch (e) {
+                console.error('Failed to parse graph from restored files', e);
+              }
+            }
+          } catch (readErr) {
+            console.warn('Could not read directory from stored handle:', readErr);
+            setSaveError(`Could not access folder "${stored.folderName}". It may have been moved, deleted, or access was revoked.`);
+            clearStoredDirectoryHandle();
+            clearWorkspaceMeta();
+          }
+        } else if (perm === 'prompt') {
+          // Browser requires user gesture to request readwrite permission after reload
+          setPendingReconnect({
+            handle: stored.handle,
+            folderName: stored.folderName,
+            meta
+          });
+        } else {
+          // perm === 'denied'
+          setSaveError(`Permission to access folder "${stored.folderName}" was revoked.`);
+          clearStoredDirectoryHandle();
+          clearWorkspaceMeta();
+        }
+      } catch (err) {
+        console.warn('Failed to restore workspace:', err);
+      } finally {
+        if (!isCancelled) {
+          setIsRestoringWorkspace(false);
+        }
+      }
+    };
+
+    restoreWorkspace();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  const reconnectWorkspace = async (): Promise<boolean> => {
+    if (!pendingReconnect) return false;
+    setSaveError(null);
+    try {
+      const perm = await verifyDirectoryPermission(pendingReconnect.handle, true);
+      if (perm === 'granted') {
+        const dirHandle = pendingReconnect.handle;
+        const folderName = pendingReconnect.folderName;
+        const meta = pendingReconnect.meta;
+
+        const loadedFiles = await readDirectoryRecursive(dirHandle);
+        if (loadedFiles.length > 0) {
+          directoryHandleRef.current = dirHandle;
+          setCurrentProjectIdState('custom');
+          setFiles(loadedFiles);
+
+          // Restore open tabs and active file, validating against disk files
+          const validOpenIds: string[] = [];
+          if (meta?.openFilePaths && meta.openFilePaths.length > 0) {
+            for (const p of meta.openFilePaths) {
+              const match = loadedFiles.find(f => f.path === p);
+              if (match && !validOpenIds.includes(match.id)) {
+                validOpenIds.push(match.id);
+              }
+            }
+          }
+          if (validOpenIds.length === 0 && loadedFiles.length > 0) {
+            validOpenIds.push(loadedFiles[0].id);
+          }
+          setOpenFileIds(validOpenIds);
+
+          let validActiveId = '';
+          if (meta?.activeFilePath) {
+            const match = loadedFiles.find(f => f.path === meta.activeFilePath);
+            if (match) {
+              validActiveId = match.id;
+            }
+          }
+          if (!validActiveId) {
+            validActiveId = validOpenIds[0] || '';
+          }
+          setActiveFileId(validActiveId);
+
+          setMasterPrompt(prev => ({
+            ...prev,
+            projectName: folderName,
+            lastSynced: 'Just now (Restored from folder)',
+            astVersion: 'AST-' + Math.random().toString(36).substring(2, 7).toUpperCase()
+          }));
+
+          try {
+            const { nodes, edges } = buildGraphFromFiles(loadedFiles);
+            if (nodes.length > 0) {
+              setGraphNodes(nodes);
+              setGraphEdges(edges);
+              setSelectedGraphNode(nodes[0]);
+            }
+          } catch (e) {
+            console.error('Failed to parse graph from reconnected files', e);
+          }
+
+          setPendingReconnect(null);
+          return true;
+        } else {
+          setSaveError(`The folder "${folderName}" contains no supported files.`);
+          setPendingReconnect(null);
+          return false;
+        }
+      } else {
+        setSaveError(`Permission to access folder "${pendingReconnect.folderName}" was denied.`);
+        return false;
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      setSaveError(`Failed to reconnect folder: ${errorMsg}`);
+      return false;
+    }
+  };
+
+  const dismissReconnect = () => {
+    setPendingReconnect(null);
+    clearStoredDirectoryHandle();
+    clearWorkspaceMeta();
   };
 
   const runChangeImpactAnalysis = (targetId: string) => {
@@ -724,7 +1096,11 @@ Using persistent Knowledge Graph for **${masterPrompt.projectName}**:
         clearSaveError,
         hasFsAccess,
         openProjectFolder,
-        loadExternalFiles
+        loadExternalFiles,
+        isRestoringWorkspace,
+        pendingReconnect,
+        reconnectWorkspace,
+        dismissReconnect
       }}
     >
       {children}

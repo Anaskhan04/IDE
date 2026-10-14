@@ -18,6 +18,34 @@ export const hasFsAccess: boolean =
   typeof (window as any).showDirectoryPicker === 'function';
 
 /**
+ * Query or request permission on a directory handle.
+ * If promptUser is false, queries the existing state without prompting.
+ * If promptUser is true, calls requestPermission (must be called within a user gesture).
+ */
+export async function verifyDirectoryPermission(
+  dirHandle: FileSystemDirectoryHandle,
+  promptUser = false
+): Promise<'granted' | 'prompt' | 'denied'> {
+  try {
+    if (typeof (dirHandle as any).queryPermission === 'function') {
+      const state = await (dirHandle as any).queryPermission({ mode: 'readwrite' });
+      if (state === 'granted') {
+        return 'granted';
+      }
+      if (promptUser && typeof (dirHandle as any).requestPermission === 'function') {
+        const reqState = await (dirHandle as any).requestPermission({ mode: 'readwrite' });
+        return reqState;
+      }
+      return state;
+    }
+    return 'granted';
+  } catch (err) {
+    console.warn('verifyDirectoryPermission error:', err);
+    return 'denied';
+  }
+}
+
+/**
  * Write `content` to `handle` using the File System Access API.
  * Throws if the write fails (permissions denied, disk full, etc.).
  */
@@ -98,6 +126,135 @@ export async function readDirectoryRecursive(
 }
 
 /**
+ * Resolves the parent directory handle and filename for a relative path from the root directory.
+ * If create is true, intermediate missing directories will be created.
+ */
+export async function resolveParentDirectoryHandle(
+  rootDir: FileSystemDirectoryHandle,
+  filePath: string,
+  create = false
+): Promise<{ parentDir: FileSystemDirectoryHandle; fileName: string } | null> {
+  const parts = filePath.split('/').filter(Boolean);
+  if (parts.length === 0) return null;
+  const fileName = parts[parts.length - 1];
+  let currentDir = rootDir;
+  for (let i = 0; i < parts.length - 1; i++) {
+    currentDir = await currentDir.getDirectoryHandle(parts[i], { create });
+  }
+  return { parentDir: currentDir, fileName };
+}
+
+/**
+ * Delete a file on disk from within a root directory handle.
+ * Resolves nested directories and calls removeEntry.
+ */
+export async function deleteFileOnDisk(
+  rootDir: FileSystemDirectoryHandle,
+  filePath: string
+): Promise<void> {
+  const resolved = await resolveParentDirectoryHandle(rootDir, filePath, false);
+  if (!resolved) {
+    throw new Error(`Invalid file path: "${filePath}"`);
+  }
+  await resolved.parentDir.removeEntry(resolved.fileName);
+}
+
+/**
+ * Rename a file on disk within the root directory handle.
+ * Uses native FileSystemHandle.move() if available; otherwise uses a safe copy-and-delete fallback.
+ * Checks for destination existence to prevent unintentional overwriting.
+ */
+export async function renameFileOnDisk(
+  rootDir: FileSystemDirectoryHandle,
+  oldPath: string,
+  newName: string,
+  fileHandle?: FileSystemFileHandle,
+  confirmOverwrite?: (filename: string) => Promise<boolean> | boolean
+): Promise<{ newHandle: FileSystemFileHandle; newPath: string }> {
+  const cleanNewName = newName.trim();
+  if (!cleanNewName) {
+    throw new Error('New file name cannot be empty');
+  }
+
+  const resolved = await resolveParentDirectoryHandle(rootDir, oldPath, false);
+  if (!resolved) {
+    throw new Error(`Invalid file path: "${oldPath}"`);
+  }
+  const { parentDir, fileName: oldName } = resolved;
+
+  const pathParts = oldPath.split('/').filter(Boolean);
+  pathParts[pathParts.length - 1] = cleanNewName;
+  const newPath = pathParts.join('/');
+
+  if (cleanNewName === oldName) {
+    const handle = fileHandle || (await parentDir.getFileHandle(oldName));
+    return { newHandle: handle, newPath: oldPath };
+  }
+
+  // Check if target file already exists in the same directory
+  let targetExists = false;
+  try {
+    await parentDir.getFileHandle(cleanNewName, { create: false });
+    targetExists = true;
+  } catch {
+    // Does not exist, safe to proceed
+  }
+
+  if (targetExists) {
+    const confirmed = confirmOverwrite
+      ? await confirmOverwrite(cleanNewName)
+      : window.confirm(`File "${cleanNewName}" already exists. Do you want to overwrite it?`);
+    if (!confirmed) {
+      throw new Error(`Rename cancelled: "${cleanNewName}" already exists.`);
+    }
+  }
+
+  const handleToMove = fileHandle || (await parentDir.getFileHandle(oldName));
+
+  // Method 1: Try native FileSystemHandle.move() if supported
+  if (typeof (handleToMove as any).move === 'function') {
+    try {
+      await (handleToMove as any).move(cleanNewName);
+      return { newHandle: handleToMove, newPath };
+    } catch (moveErr) {
+      console.warn('Native move() failed or not supported by browser, falling back to copy+delete:', moveErr);
+    }
+  }
+
+  // Method 2: Safe copy-and-delete fallback
+  const sourceFile = await handleToMove.getFile();
+  const content = await sourceFile.text();
+  const newHandle = await parentDir.getFileHandle(cleanNewName, { create: true });
+  await writeFileHandle(newHandle, content);
+  await parentDir.removeEntry(oldName);
+
+  return { newHandle, newPath };
+}
+
+/**
+ * Create a new file on disk within a directory handle, resolving nested directories,
+ * and return the created file handle and normalized path.
+ */
+export async function createFileOnDisk(
+  rootDir: FileSystemDirectoryHandle,
+  filePath: string,
+  initialContent = ''
+): Promise<{ fileHandle: FileSystemFileHandle; normalizedPath: string }> {
+  const parts = filePath.split('/').filter(Boolean);
+  if (parts.length === 0) {
+    throw new Error('File path cannot be empty');
+  }
+  const fileName = parts[parts.length - 1];
+  let currentDir = rootDir;
+  for (let i = 0; i < parts.length - 1; i++) {
+    currentDir = await currentDir.getDirectoryHandle(parts[i], { create: true });
+  }
+  const fileHandle = await currentDir.getFileHandle(fileName, { create: true });
+  await writeFileHandle(fileHandle, initialContent);
+  return { fileHandle, normalizedPath: parts.join('/') };
+}
+
+/**
  * Create a new file on disk within a directory handle, resolving any nested directories.
  */
 export async function createFileInDirectory(
@@ -106,14 +263,7 @@ export async function createFileInDirectory(
   initialContent = ''
 ): Promise<FileSystemFileHandle | null> {
   try {
-    const parts = filePath.split('/').filter(Boolean);
-    if (parts.length === 0) return null;
-    let currentDir = rootDir;
-    for (let i = 0; i < parts.length - 1; i++) {
-      currentDir = await currentDir.getDirectoryHandle(parts[i], { create: true });
-    }
-    const fileHandle = await currentDir.getFileHandle(parts[parts.length - 1], { create: true });
-    await writeFileHandle(fileHandle, initialContent);
+    const { fileHandle } = await createFileOnDisk(rootDir, filePath, initialContent);
     return fileHandle;
   } catch (err) {
     console.warn('Could not create file on disk:', err);

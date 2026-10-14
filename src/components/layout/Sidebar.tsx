@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import {
+  AlertCircle,
   Check,
   ChevronDown,
   ChevronRight,
@@ -48,9 +49,14 @@ export const Sidebar: React.FC = () => {
     loadExternalFiles,
     openProjectFolder,
     masterPrompt,
+    isRestoringWorkspace,
+    pendingReconnect,
+    reconnectWorkspace,
+    dismissReconnect,
   } = useIDE();
 
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [isCreatingFile, setIsCreatingFile] = useState(false);
@@ -104,19 +110,23 @@ export const Sidebar: React.FC = () => {
     });
   };
 
-  const submitCreateFile = (event: React.FormEvent) => {
+  const submitCreateFile = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!newFileName.trim()) {
+    const clean = newFileName.trim();
+    if (!clean) {
       setIsCreatingFile(false);
       return;
     }
-    createFile(newFileName, targetFolder);
+    await createFile(clean, targetFolder);
     setNewFileName('');
     setIsCreatingFile(false);
   };
 
-  const submitRename = (fileId: string) => {
-    if (renameValue.trim()) renameFile(fileId, renameValue);
+  const submitRename = async (fileId: string) => {
+    const trimmed = renameValue.trim();
+    if (trimmed) {
+      await renameFile(fileId, trimmed);
+    }
     setRenamingFileId(null);
   };
 
@@ -185,13 +195,24 @@ export const Sidebar: React.FC = () => {
 
       if (child.isFolder) {
         const isCollapsed = collapsedFolders.has(child.fullPath);
+        const isFolderSelected = selectedFolder === child.fullPath;
         return (
           <div key={child.fullPath} role="treeitem" aria-expanded={!isCollapsed}>
-            <div className="group flex min-h-[26px] items-center border-l border-transparent hover:bg-ide-hover/60" style={{ paddingLeft: `${8 + depth * 12}px` }}>
+            <div
+              className={`group flex min-h-[26px] items-center border-l ${
+                isFolderSelected
+                  ? 'border-ide-focus bg-ide-selected/40 text-ide-strong'
+                  : 'border-transparent text-ide-text hover:bg-ide-hover/60'
+              }`}
+              style={{ paddingLeft: `${8 + depth * 12}px` }}
+            >
               <button
                 type="button"
-                onClick={() => toggleFolder(child.fullPath)}
-                className="ide-focus-ring flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left text-[11px] text-ide-text"
+                onClick={() => {
+                  toggleFolder(child.fullPath);
+                  setSelectedFolder(child.fullPath);
+                }}
+                className="ide-focus-ring flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left text-[11px]"
               >
                 {isCollapsed ? <ChevronRight className="h-3 w-3 shrink-0 text-ide-subtle" /> : <ChevronDown className="h-3 w-3 shrink-0 text-ide-subtle" />}
                 <Folder className="h-3.5 w-3.5 shrink-0 text-ide-focus" aria-hidden="true" />
@@ -199,7 +220,9 @@ export const Sidebar: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setSelectedFolder(child.fullPath);
                   setTargetFolder(child.fullPath);
                   setIsCreatingFile(true);
                 }}
@@ -248,7 +271,13 @@ export const Sidebar: React.FC = () => {
             <>
               <button
                 type="button"
-                onClick={() => openFile(file.id)}
+                onClick={() => {
+                  openFile(file.id);
+                  const parentFolder = file.path.includes('/')
+                    ? file.path.split('/').slice(0, -1).join('/')
+                    : '';
+                  setSelectedFolder(parentFolder);
+                }}
                 className="ide-focus-ring flex min-w-0 flex-1 items-center gap-2 py-1 pr-1 text-left text-[11px]"
               >
                 <span className={`w-5 shrink-0 text-center font-mono text-[10px] font-semibold ${fileTypeClass(file.name)}`}>{fileTypeLabel(file.name)}</span>
@@ -270,9 +299,7 @@ export const Sidebar: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (window.confirm(`Delete ${file.name}?`)) deleteFile(file.id);
-                  }}
+                  onClick={() => deleteFile(file.id)}
                   className="ide-focus-ring flex h-6 w-6 items-center justify-center text-ide-subtle hover:text-ide-rose"
                   title="Delete file"
                   aria-label={`Delete ${file.name}`}
@@ -309,7 +336,14 @@ export const Sidebar: React.FC = () => {
           <button
             type="button"
             onClick={() => {
-              setTargetFolder('src');
+              // Priority: explicitly selected folder, or active file's folder, or root ('')
+              let target = '';
+              if (selectedFolder !== null) {
+                target = selectedFolder;
+              } else if (activeFile && activeFile.path.includes('/')) {
+                target = activeFile.path.split('/').slice(0, -1).join('/');
+              }
+              setTargetFolder(target);
               setIsCreatingFile(true);
             }}
             className="ide-focus-ring flex h-7 w-7 items-center justify-center text-ide-muted hover:bg-ide-hover hover:text-ide-text"
@@ -345,15 +379,60 @@ export const Sidebar: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-ide-border px-3 font-mono text-[11px] text-ide-text">
+      <div 
+        onClick={() => setSelectedFolder('')}
+        className={`flex h-9 shrink-0 cursor-pointer items-center gap-1.5 border-b border-ide-border px-3 font-mono text-[11px] ${
+          selectedFolder === '' ? 'bg-ide-selected/40 text-ide-strong' : 'text-ide-text hover:bg-ide-hover/50'
+        }`}
+        title="Project root (click to select root folder)"
+      >
         <ChevronDown className="h-3 w-3 text-ide-subtle" aria-hidden="true" />
         <span className="truncate">{masterPrompt.projectName || 'workspace'}</span>
+        {selectedFolder === '' && <span className="ml-auto text-[9px] text-ide-focus font-sans">(root)</span>}
       </div>
+
+      {pendingReconnect && (
+        <div className="border-b border-ide-amber/30 bg-ide-amber/10 p-2.5 font-sans text-xs">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0 text-ide-amber mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-ide-strong">Reconnect Folder</div>
+              <div className="mt-0.5 text-[11px] text-ide-muted leading-relaxed">
+                Browser permissions reset on refresh. Click to restore <span className="font-mono text-ide-strong">"{pendingReconnect.folderName}"</span>.
+              </div>
+              <div className="mt-2 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => reconnectWorkspace()}
+                  className="ide-focus-ring flex items-center gap-1 bg-ide-focus px-2 py-1 text-[11px] font-medium text-white hover:bg-ide-focus/90"
+                >
+                  <FolderOpen className="h-3 w-3" />
+                  Reconnect
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissReconnect}
+                  className="ide-focus-ring px-2 py-1 text-[11px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isRestoringWorkspace && (
+        <div className="flex items-center gap-2 border-b border-ide-border bg-ide-surface/50 px-3 py-2 font-mono text-[11px] text-ide-muted">
+          <div className="h-2 w-2 rounded-full bg-ide-focus animate-pulse" />
+          <span>Restoring workspace...</span>
+        </div>
+      )}
 
       {isCreatingFile && (
         <form onSubmit={submitCreateFile} className="border-b border-ide-border bg-ide-surface p-2">
           <label className="mb-1 block font-mono text-[10px] text-ide-focus" htmlFor="new-file-name">
-            New file in {targetFolder || 'workspace'}
+            New file in {targetFolder ? targetFolder : 'project root'}
           </label>
           <div className="flex items-center gap-1">
             <input
@@ -362,7 +441,10 @@ export const Sidebar: React.FC = () => {
               autoFocus
               value={newFileName}
               onChange={(event) => setNewFileName(event.target.value)}
-              placeholder="e.g. parser.ts"
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setIsCreatingFile(false);
+              }}
+              placeholder="e.g. parser.ts or subfolder/file.ts"
               className="ide-focus-ring min-w-0 flex-1 border border-ide-border-strong bg-ide-code px-2 py-1 font-mono text-[11px] text-ide-strong outline-none placeholder:text-ide-subtle"
             />
             <button type="submit" className="ide-focus-ring flex h-7 w-7 items-center justify-center bg-ide-focus text-white" aria-label="Create file">
@@ -378,7 +460,7 @@ export const Sidebar: React.FC = () => {
       <div className="min-h-0 flex-1 overflow-y-auto py-1" role="tree" aria-label="Workspace files">
         {files.length === 0 ? (
           <div className="px-4 py-5 text-center font-mono text-[10px] text-ide-subtle">
-            No files in workspace
+            {isRestoringWorkspace ? 'Restoring files...' : 'No files in workspace'}
           </div>
         ) : (
           renderTree(fileTree)
