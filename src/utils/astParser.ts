@@ -52,21 +52,33 @@ function getScriptKind(fileName: string): ts.ScriptKind | null {
 }
 
 /**
- * Checks whether a file can be parsed with the TypeScript AST compiler.
+ * Checks whether a file can be parsed with the TypeScript AST compiler or dedicated analyzer.
  */
 export function isSupportedAstLanguage(fileName: string): boolean {
-  return getScriptKind(fileName) !== null;
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  return (
+    getScriptKind(fileName) !== null ||
+    ['html', 'htm', 'css', 'scss', 'c', 'h', 'py'].includes(ext || '')
+  );
 }
 
 /**
- * Parse and analyze a JavaScript or TypeScript file using the official TypeScript Compiler API.
- * Never throws on syntax errors; recovers gracefully and extracts all discoverable symbols.
+ * Parse and analyze a source file (JS, TS, HTML, CSS, Python, C, etc.).
+ * Never throws on syntax errors; recovers gracefully and extracts all discoverable symbols and dependencies.
  */
 export function analyzeSourceFile(file: ProjectFile, allFiles: ProjectFile[] = []): FileAnalysisResult {
+  const ext = file.name.split('.').pop()?.toLowerCase();
+  if (ext === 'html' || ext === 'htm') {
+    return analyzeHtmlFile(file, allFiles);
+  }
+  if (ext === 'css' || ext === 'scss') {
+    return analyzeCssFile(file, allFiles);
+  }
+
   const scriptKind = getScriptKind(file.name);
   if (!scriptKind || scriptKind === ts.ScriptKind.JSON) {
     // Non-JS/TS files: fallback graceful analysis
-    return analyzeFallbackFile(file);
+    return analyzeFallbackFile(file, allFiles);
   }
 
   const result: FileAnalysisResult = {
@@ -346,9 +358,46 @@ export function analyzeSourceFile(file: ProjectFile, allFiles: ProjectFile[] = [
         return;
       }
 
-      // 10. Call Expressions: foo(), myObj.method()
+      // 10. Call Expressions: foo(), myObj.method(), require('./foo'), import('./bar')
       if (ts.isCallExpression(node)) {
         const line = getLine(node.getStart(sourceFile));
+
+        // Detect CommonJS require('./foo')
+        if (
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === 'require' &&
+          node.arguments.length > 0 &&
+          ts.isStringLiteral(node.arguments[0])
+        ) {
+          const specifier = node.arguments[0].text;
+          const resolvedPath = resolveImportPath(specifier, file.path, allFiles);
+          result.imports.push({
+            specifier,
+            resolvedPath,
+            names: [],
+            isDefault: true,
+            isNamespace: false,
+            line,
+          });
+        }
+        // Detect dynamic import('./foo')
+        else if (
+          node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+          node.arguments.length > 0 &&
+          ts.isStringLiteral(node.arguments[0])
+        ) {
+          const specifier = (node.arguments[0] as ts.StringLiteral).text;
+          const resolvedPath = resolveImportPath(specifier, file.path, allFiles);
+          result.imports.push({
+            specifier,
+            resolvedPath,
+            names: [],
+            isDefault: true,
+            isNamespace: false,
+            line,
+          });
+        }
+
         let calleeName = '';
         if (ts.isIdentifier(node.expression)) {
           calleeName = node.expression.text;
@@ -389,7 +438,7 @@ export function analyzeSourceFile(file: ProjectFile, allFiles: ProjectFile[] = [
 /**
  * Fallback analyzer for non-JS/TS files (C, Python, Markdown, JSON, etc.)
  */
-function analyzeFallbackFile(file: ProjectFile): FileAnalysisResult {
+function analyzeFallbackFile(file: ProjectFile, allFiles: ProjectFile[] = []): FileAnalysisResult {
   const result: FileAnalysisResult = {
     symbols: [],
     imports: [],
@@ -421,9 +470,12 @@ function analyzeFallbackFile(file: ProjectFile): FileAnalysisResult {
       // C includes: #include "foo.h"
       const incMatch = line.match(/^\s*#include\s+["<]([^">]+)[">]/);
       if (incMatch) {
+        const specifier = incMatch[1];
+        const resolvedPath = resolveImportPath(specifier, file.path, allFiles);
         result.imports.push({
-          specifier: incMatch[1],
-          names: [incMatch[1]],
+          specifier,
+          resolvedPath,
+          names: [specifier],
           isDefault: true,
           isNamespace: false,
           line: lineNum,
@@ -459,47 +511,339 @@ function analyzeFallbackFile(file: ProjectFile): FileAnalysisResult {
 }
 
 /**
- * Resolves an import specifier (e.g. `./utils/fsAccess` or `../types/ide`)
+ * Normalizes a file path: converts backslashes to forward slashes, strips leading './' or '/', collapses redundant slashes.
+ */
+export function normalizePath(p: string): string {
+  return p
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/\/+/g, '/')
+    .replace(/^\//, '');
+}
+
+/**
+ * Resolves an import specifier (e.g. `./utils/fsAccess`, `style.css`, or `/src/script.js`)
  * against the list of actual ProjectFiles in the workspace.
+ * Correctly distinguishes local relative/root paths from external package dependencies.
  */
 export function resolveImportPath(
   specifier: string,
   currentFilePath: string,
   allFiles: ProjectFile[]
 ): string | undefined {
-  if (!specifier.startsWith('.')) {
-    // External package dependency (e.g. 'react', 'lucide-react')
+  if (!specifier || !currentFilePath || !allFiles || allFiles.length === 0) {
     return undefined;
   }
 
-  // Normalize current directory
-  const currentDirParts = currentFilePath.split('/').slice(0, -1);
-  const specParts = specifier.split('/');
+  // Strip wrapping quotes and whitespace
+  let cleanSpec = specifier.trim().replace(/^['"]|['"]$/g, '');
+  // Strip query string and fragment/hash (e.g. style.css?v=2, app.js#main)
+  cleanSpec = cleanSpec.split('?')[0].split('#')[0].trim();
+  if (!cleanSpec) return undefined;
 
-  const resolvedParts = [...currentDirParts];
-  for (const part of specParts) {
-    if (part === '.' || part === '') continue;
-    if (part === '..') {
-      resolvedParts.pop();
-    } else {
-      resolvedParts.push(part);
+  // External web protocols or URLs are not local project files
+  if (/^(?:https?:|\/\/|data:|mailto:|javascript:|about:)/i.test(cleanSpec)) {
+    return undefined;
+  }
+
+  const normCurrentPath = normalizePath(currentFilePath);
+  const currentDirParts = normCurrentPath.includes('/') ? normCurrentPath.split('/').slice(0, -1) : [];
+
+  const candidateBasePaths: string[] = [];
+
+  if (cleanSpec.startsWith('/')) {
+    // Root-relative path in web projects: e.g. /style.css, /src/script.js
+    candidateBasePaths.push(normalizePath(cleanSpec));
+  } else if (cleanSpec.startsWith('./') || cleanSpec.startsWith('../')) {
+    // Explicit relative path
+    const specParts = cleanSpec.replace(/\\/g, '/').split('/');
+    const resolvedParts = [...currentDirParts];
+    for (const part of specParts) {
+      if (part === '.' || part === '') continue;
+      if (part === '..') {
+        resolvedParts.pop();
+      } else {
+        resolvedParts.push(part);
+      }
+    }
+    candidateBasePaths.push(resolvedParts.join('/'));
+  } else {
+    // Specifier without ./ or /:
+    // 1. First, check relative to current file's directory (standard for HTML, CSS, and local assets)
+    const specParts = cleanSpec.replace(/\\/g, '/').split('/');
+    const resolvedParts = [...currentDirParts];
+    for (const part of specParts) {
+      if (part === '.' || part === '') continue;
+      if (part === '..') {
+        resolvedParts.pop();
+      } else {
+        resolvedParts.push(part);
+      }
+    }
+    candidateBasePaths.push(resolvedParts.join('/'));
+
+    // 2. Also check directly as a workspace root-relative path (e.g. "src/main.js")
+    candidateBasePaths.push(normalizePath(cleanSpec));
+  }
+
+  for (const basePath of candidateBasePaths) {
+    const normBase = normalizePath(basePath);
+    const candidates = [
+      normBase,
+      `${normBase}.ts`,
+      `${normBase}.tsx`,
+      `${normBase}.js`,
+      `${normBase}.jsx`,
+      `${normBase}.mjs`,
+      `${normBase}.cjs`,
+      `${normBase}.css`,
+      `${normBase}.html`,
+      `${normBase}/index.ts`,
+      `${normBase}/index.tsx`,
+      `${normBase}/index.js`,
+      `${normBase}/index.jsx`,
+      `${normBase}/index.html`,
+    ];
+
+    const matched = allFiles.find((f) => {
+      const normF = normalizePath(f.path);
+      return candidates.includes(normF);
+    });
+
+    if (matched) {
+      return matched.path;
     }
   }
 
-  const basePath = resolvedParts.join('/');
-  const candidates = [
-    basePath,
-    `${basePath}.ts`,
-    `${basePath}.tsx`,
-    `${basePath}.js`,
-    `${basePath}.jsx`,
-    `${basePath}/index.ts`,
-    `${basePath}/index.tsx`,
-    `${basePath}/index.js`,
-  ];
+  return undefined;
+}
 
-  const matched = allFiles.find((f) => candidates.includes(f.path));
-  return matched?.path;
+/**
+ * Extracts CSS @import URLs from CSS content with accurate 1-based line numbers.
+ */
+function extractCssImportsFromText(content: string, baseLine = 1): Array<{ specifier: string; line: number }> {
+  const imports: Array<{ specifier: string; line: number }> = [];
+  const importRegex = /@import\s+(?:url\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^'")\s]+))\s*\)|"([^"]*)"|'([^']*)')/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = importRegex.exec(content)) !== null) {
+    const specifier = match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5] ?? '';
+    if (specifier.trim()) {
+      const lineOffset = content.substring(0, match.index).split('\n').length - 1;
+      imports.push({
+        specifier: specifier.trim(),
+        line: baseLine + lineOffset,
+      });
+    }
+  }
+
+  return imports;
+}
+
+/**
+ * Analyzes a CSS or SCSS file for @import dependencies.
+ */
+export function analyzeCssFile(file: ProjectFile, allFiles: ProjectFile[] = []): FileAnalysisResult {
+  const result: FileAnalysisResult = {
+    symbols: [],
+    imports: [],
+    exports: [],
+    calls: [],
+    hasErrors: false,
+    errorCount: 0,
+  };
+
+  const cssImports = extractCssImportsFromText(file.content, 1);
+  for (const imp of cssImports) {
+    const resolvedPath = resolveImportPath(imp.specifier, file.path, allFiles);
+    result.imports.push({
+      specifier: imp.specifier,
+      resolvedPath,
+      names: [imp.specifier.split('/').pop() || imp.specifier],
+      isDefault: true,
+      isNamespace: false,
+      line: imp.line,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Analyzes an HTML file to discover <link> stylesheet references, <script> external and inline references,
+ * and <style> imports.
+ */
+export function analyzeHtmlFile(file: ProjectFile, allFiles: ProjectFile[] = []): FileAnalysisResult {
+  const result: FileAnalysisResult = {
+    symbols: [],
+    imports: [],
+    exports: [],
+    calls: [],
+    hasErrors: false,
+    errorCount: 0,
+  };
+
+  const content = file.content;
+  const getLineFromPos = (pos: number): number => {
+    return content.substring(0, pos).split('\n').length;
+  };
+
+  // 1. Extract <link> tags: e.g. <link rel="stylesheet" href="style.css">
+  const linkRegex = /<link\b([^>]*?)(?:>|\/>)/gi;
+  let linkMatch: RegExpExecArray | null;
+  while ((linkMatch = linkRegex.exec(content)) !== null) {
+    const attrs = linkMatch[1];
+    const hrefMatch = attrs.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    if (!hrefMatch) continue;
+
+    const href = (hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? '').trim();
+    if (!href) continue;
+
+    const relMatch = attrs.match(/\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    const rel = (relMatch ? (relMatch[1] ?? relMatch[2] ?? relMatch[3] ?? '') : '').toLowerCase().trim();
+
+    // Only link tags intended as stylesheets, preloaded styles/scripts, icons, or referencing existing files
+    const isStyleOrScript =
+      !rel ||
+      rel === 'stylesheet' ||
+      rel === 'preload' ||
+      rel === 'modulepreload' ||
+      rel === 'icon' ||
+      rel === 'shortcut icon' ||
+      /\.(css|scss|less|js|mjs|ts|tsx)$/i.test(href);
+
+    if (isStyleOrScript) {
+      const line = getLineFromPos(linkMatch.index);
+      const resolvedPath = resolveImportPath(href, file.path, allFiles);
+      const fileName = href.split('/').pop() || href;
+
+      result.imports.push({
+        specifier: href,
+        resolvedPath,
+        names: [fileName],
+        isDefault: true,
+        isNamespace: false,
+        line,
+      });
+    }
+  }
+
+  // 2. Extract <script> tags: e.g. <script src="script.js"></script> and inline <script>...</script>
+  const scriptRegex = /<script\b([\s\S]*?)(?:>(?:([\s\S]*?)<\/script>)?|\/>)/gi;
+  let scriptMatch: RegExpExecArray | null;
+  while ((scriptMatch = scriptRegex.exec(content)) !== null) {
+    const attrs = scriptMatch[1] || '';
+    const inlineBody = scriptMatch[2];
+    const line = getLineFromPos(scriptMatch.index);
+
+    const srcMatch = attrs.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    if (srcMatch) {
+      const src = (srcMatch[1] ?? srcMatch[2] ?? srcMatch[3] ?? '').trim();
+      if (src) {
+        const resolvedPath = resolveImportPath(src, file.path, allFiles);
+        const fileName = src.split('/').pop() || src;
+
+        result.imports.push({
+          specifier: src,
+          resolvedPath,
+          names: [fileName],
+          isDefault: true,
+          isNamespace: false,
+          line,
+        });
+      }
+    } else if (inlineBody && inlineBody.trim()) {
+      // Inline script parsing using TypeScript compiler API
+      try {
+        const isModule = /\btype\s*=\s*["']module["']/i.test(attrs);
+        const inlineSource = ts.createSourceFile(
+          `${file.name}_inline_${line}.js`,
+          inlineBody,
+          ts.ScriptTarget.Latest,
+          true,
+          isModule ? ts.ScriptKind.JS : ts.ScriptKind.JS
+        );
+
+        const getInlineLine = (pos: number): number => {
+          return line + inlineSource.getLineAndCharacterOfPosition(pos).line;
+        };
+
+        const visitInline = (node: ts.Node) => {
+          if (ts.isFunctionDeclaration(node) && node.name) {
+            const name = node.name.text;
+            const symLine = getInlineLine(node.getStart(inlineSource));
+            result.symbols.push({
+              id: `${file.path}:${name}:${symLine}`,
+              name,
+              kind: 'function',
+              line: symLine,
+              exported: true,
+              calls: [],
+            });
+          }
+
+          if (ts.isCallExpression(node)) {
+            const callLine = getInlineLine(node.getStart(inlineSource));
+            let calleeName = '';
+            if (ts.isIdentifier(node.expression)) {
+              calleeName = node.expression.text;
+            } else if (ts.isPropertyAccessExpression(node.expression)) {
+              calleeName = node.expression.name.text;
+            }
+
+            if (calleeName && !['if', 'for', 'while', 'switch', 'require', 'import'].includes(calleeName)) {
+              result.calls.push({
+                calleeName,
+                line: callLine,
+              });
+            }
+          }
+
+          if (ts.isImportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+            const specifier = node.moduleSpecifier.text;
+            const impLine = getInlineLine(node.getStart(inlineSource));
+            const resolvedPath = resolveImportPath(specifier, file.path, allFiles);
+            result.imports.push({
+              specifier,
+              resolvedPath,
+              names: [],
+              isDefault: false,
+              isNamespace: false,
+              line: impLine,
+            });
+          }
+
+          ts.forEachChild(node, visitInline);
+        };
+
+        visitInline(inlineSource);
+      } catch {
+        // Recover gracefully from syntax errors in inline script
+      }
+    }
+  }
+
+  // 3. Extract @import inside <style> tags
+  const styleRegex = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+  let styleMatch: RegExpExecArray | null;
+  while ((styleMatch = styleRegex.exec(content)) !== null) {
+    const styleBody = styleMatch[1];
+    const styleStartLine = getLineFromPos(styleMatch.index);
+    const cssImports = extractCssImportsFromText(styleBody, styleStartLine);
+    for (const imp of cssImports) {
+      const resolvedPath = resolveImportPath(imp.specifier, file.path, allFiles);
+      result.imports.push({
+        specifier: imp.specifier,
+        resolvedPath,
+        names: [imp.specifier.split('/').pop() || imp.specifier],
+        isDefault: true,
+        isNamespace: false,
+        line: imp.line,
+      });
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -802,12 +1146,15 @@ export function buildGraphFromFiles(files: ProjectFile[]): {
     const fileNodeId = `node-file-${file.id}`;
     const analysis = analyzeSourceFile(file, enrichedFiles);
 
-    analysis.imports.forEach((imp, impIdx) => {
+    analysis.imports.forEach((imp) => {
       if (imp.resolvedPath) {
-        const targetFile = enrichedFiles.find((f) => f.path === imp.resolvedPath);
+        const normImpPath = normalizePath(imp.resolvedPath);
+        const targetFile = enrichedFiles.find(
+          (f) => f.path === imp.resolvedPath || normalizePath(f.path) === normImpPath
+        );
         if (targetFile && targetFile.id !== file.id) {
           const targetNodeId = `node-file-${targetFile.id}`;
-          const importEdgeId = `edge-import-${file.id}-${targetFile.id}-${impIdx}`;
+          const importEdgeId = `edge-import-${file.id}-${targetFile.id}`;
 
           if (!edgeSet.has(importEdgeId)) {
             edges.push({
@@ -825,7 +1172,7 @@ export function buildGraphFromFiles(files: ProjectFile[]): {
     });
 
     // 5. Build Real CALLS Edges
-    analysis.calls.forEach((call, callIdx) => {
+    analysis.calls.forEach((call) => {
       for (const targetFile of enrichedFiles) {
         const matchedSymbol = targetFile.symbols?.find((s) => s.name === call.calleeName);
         if (matchedSymbol) {
@@ -837,7 +1184,7 @@ export function buildGraphFromFiles(files: ProjectFile[]): {
           const effectiveSourceId = nodeMap.has(sourceNodeId) ? sourceNodeId : fileNodeId;
 
           if (nodeMap.has(targetSymId) && effectiveSourceId !== targetSymId) {
-            const callEdgeId = `edge-call-${effectiveSourceId}-${targetSymId}-${callIdx}`;
+            const callEdgeId = `edge-call-${effectiveSourceId}-${targetSymId}`;
             if (!edgeSet.has(callEdgeId)) {
               edges.push({
                 id: callEdgeId,
