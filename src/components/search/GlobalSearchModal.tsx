@@ -59,6 +59,11 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     setTargetEditorLine,
     toggleProblemsPanel,
     setIsProblemsPanelOpen,
+    toggleTerminal,
+    setIsGitHubModalOpen,
+    setIsModelSwitchingModalOpen,
+    pushToGitHub,
+    pullFromGitHub,
   } = useIDE();
 
   const [query, setQuery] = useState(initialQuery);
@@ -260,10 +265,51 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     },
     {
       id: 'cmd-toggle-copilot',
-      title: `AI: Toggle Context Inspector (${isCopilotOpen ? 'Close' : 'Open'})`,
+      title: `AI: Toggle AI Assistant (${isCopilotOpen ? 'Close' : 'Open'})`,
       category: 'AI',
       action: () => {
         setIsCopilotOpen(!isCopilotOpen);
+      },
+    },
+    {
+      id: 'cmd-model-gateway',
+      title: 'AI: Select Model, API Keys & Custom Providers',
+      category: 'AI',
+      action: () => {
+        setIsModelSwitchingModalOpen(true);
+      },
+    },
+    {
+      id: 'cmd-toggle-terminal',
+      title: 'View: Toggle Integrated Terminal',
+      category: 'View',
+      shortcut: 'Ctrl+`',
+      action: () => {
+        toggleTerminal();
+      },
+    },
+    {
+      id: 'cmd-github-modal',
+      title: 'GitHub: Sign In / Browse Private & Public Repositories',
+      category: 'GitHub',
+      action: () => {
+        setIsGitHubModalOpen(true);
+      },
+    },
+    {
+      id: 'cmd-git-push',
+      title: 'Git: Push Current Branch to GitHub',
+      category: 'GitHub',
+      action: async () => {
+        await pushToGitHub();
+      },
+    },
+    {
+      id: 'cmd-git-pull',
+      title: 'Git: Pull Latest Changes from GitHub',
+      category: 'GitHub',
+      action: async () => {
+        await pullFromGitHub();
       },
     },
   ], [

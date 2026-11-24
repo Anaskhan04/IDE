@@ -6,6 +6,8 @@ interface ResolveWorkspaceResult {
   repoRoot?: string;
   isGit: boolean;
   branch?: string;
+  remoteUrl?: string;
+  githubRepo?: { owner: string; repo: string } | null;
   message?: string;
   error?: string;
 }
@@ -15,6 +17,8 @@ interface GitStatusResult {
   isGit: boolean;
   repoRoot?: string;
   branch?: string;
+  remoteUrl?: string;
+  githubRepo?: { owner: string; repo: string } | null;
   stagedFiles: GitFileItem[];
   unstagedFiles: GitFileItem[];
   error?: string;
@@ -159,11 +163,43 @@ export const gitService = {
   /**
    * Commit staged changes with a genuine commit message.
    */
-  async commit(repoRoot: string, message: string): Promise<SimpleGitResult> {
+  async commit(repoRoot: string, message: string, authorName?: string, authorEmail?: string): Promise<SimpleGitResult> {
     try {
-      return await postApi<SimpleGitResult>('/api/git/commit', { repoRoot, message });
+      return await postApi<SimpleGitResult>('/api/git/commit', { repoRoot, message, authorName, authorEmail });
     } catch (err: any) {
       return { success: false, error: err?.message || 'Failed to commit changes' };
+    }
+  },
+
+  async push(repoRoot: string, branch?: string, token?: string): Promise<SimpleGitResult & { output?: string }> {
+    try {
+      return await postApi('/api/git/push', { repoRoot, branch, token });
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to push to GitHub' };
+    }
+  },
+
+  async pull(repoRoot: string, branch?: string, token?: string): Promise<SimpleGitResult & { output?: string }> {
+    try {
+      return await postApi('/api/git/pull', { repoRoot, branch, token });
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to pull from GitHub' };
+    }
+  },
+
+  async getBranches(repoRoot: string): Promise<{ success: boolean; current: string; branches: string[]; error?: string }> {
+    try {
+      return await postApi('/api/git/branches', { repoRoot });
+    } catch (err: any) {
+      return { success: false, current: 'main', branches: [], error: err?.message };
+    }
+  },
+
+  async checkout(repoRoot: string, branch: string, create = false): Promise<SimpleGitResult> {
+    try {
+      return await postApi('/api/git/checkout', { repoRoot, branch, create });
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to checkout branch' };
     }
   },
 
@@ -197,6 +233,71 @@ export const gitService = {
       return await postApi<ReadFolderResult>('/api/workspace/read-folder', { path });
     } catch (err: any) {
       return { success: false, error: err?.message || 'Failed to read workspace folder' };
+    }
+  },
+
+  async writeWorkspaceFile(workspacePath: string, filePath: string, content: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      return await postApi('/api/workspace/write-file', { workspacePath, filePath, content });
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to write file' };
+    }
+  },
+
+  async deleteWorkspaceFile(workspacePath: string, filePath: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      return await postApi('/api/workspace/delete-file', { workspacePath, filePath });
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to delete file' };
+    }
+  },
+
+  async renameWorkspaceFile(workspacePath: string, oldPath: string, newPath: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      return await postApi('/api/workspace/rename-file', { workspacePath, oldPath, newPath });
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to rename file' };
+    }
+  },
+
+  async mkdirWorkspace(workspacePath: string, folderPath: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      return await postApi('/api/workspace/mkdir', { workspacePath, folderPath });
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to create folder' };
+    }
+  },
+
+  async createWorkspaceDir(folderName: string, files?: { path: string; content: string }[]): Promise<{
+    success: boolean;
+    workspacePath?: string;
+    folderName?: string;
+    error?: string;
+  }> {
+    try {
+      return await postApi('/api/workspace/create-dir', { folderName, files });
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to create workspace folder' };
+    }
+  },
+
+  async execTerminal(command: string, cwd?: string): Promise<{
+    success: boolean;
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+    cwd: string;
+  }> {
+    try {
+      return await postApi('/api/terminal/exec', { command, cwd });
+    } catch (err: any) {
+      return {
+        success: false,
+        stdout: '',
+        stderr: err?.message || 'Terminal execution failed',
+        exitCode: 1,
+        cwd: cwd || '',
+      };
     }
   },
 };

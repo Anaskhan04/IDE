@@ -10,6 +10,7 @@ import {
   GraphNode, 
   GraphEdge, 
   AIModel, 
+  AIGeneratedFile,
   ChatMessage, 
   CIAResult, 
   MCPServer, 
@@ -18,9 +19,14 @@ import {
   CypherQueryResult,
   TracePathResult,
   WorkspaceDiagnostic,
-  DiagnosticsSummary
+  DiagnosticsSummary,
+  GitHubUser,
+  GitHubRepo,
+  TerminalEntry
 } from '../types/ide';
 import { gitService } from '../utils/gitService';
+import { githubService } from '../utils/githubService';
+import { buildWorkspaceSystemPrompt, parseGeneratedFilesFromResponse, sendModelRequest } from '../utils/aiService';
 
 import { INITIAL_FILES } from '../data/mockProject';
 import { INITIAL_GRAPH_NODES, INITIAL_GRAPH_EDGES, DEFAULT_CIA_RESULT, SAMPLE_CYPHER_QUERIES } from '../data/mockGraph';
@@ -81,6 +87,14 @@ interface IDEContextType {
   updateFileContent: (fileId: string, content: string) => void;
   activeModel: AIModel;
   setActiveModel: (model: AIModel) => void;
+  allModels: AIModel[];
+  customModels: AIModel[];
+  addCustomModel: (model: Omit<AIModel, 'id' | 'color' | 'isCustom'> & { apiKey?: string }, selectAfter?: boolean) => AIModel;
+  removeCustomModel: (modelId: string) => void;
+  apiKeys: Record<string, string>;
+  setApiKey: (providerKey: string, key: string) => void;
+  isGeneratingAI: boolean;
+  applyGeneratedFiles: (genFiles: AIGeneratedFile[]) => Promise<number>;
   masterPrompt: MasterPromptData;
   setMasterPrompt: React.Dispatch<React.SetStateAction<MasterPromptData>>;
   graphNodes: GraphNode[];
@@ -117,6 +131,7 @@ interface IDEContextType {
 
   // VS Code / Antigravity File System Operations
   createFile: (name: string, folderPath?: string, content?: string) => Promise<ProjectFile | null>;
+  createFolder: (folderPath: string) => Promise<boolean>;
   deleteFile: (fileId: string) => Promise<boolean>;
   renameFile: (fileId: string, newName: string) => Promise<boolean>;
   /** Save the file to disk (via File System Access API) if a handle is available,
@@ -127,7 +142,7 @@ interface IDEContextType {
   clearSaveError: () => void;
   /** True when the File System Access API with write support is available in this browser. */
   hasFsAccess: boolean;
-  loadExternalFiles: (newFiles: ProjectFile[], folderName?: string, dirHandle?: FileSystemDirectoryHandle) => void;
+  loadExternalFiles: (newFiles: ProjectFile[], folderName?: string, dirHandle?: FileSystemDirectoryHandle, explicitPath?: string) => void;
   /** Open a local folder using the File System Access API with handle retention.
    *  Returns true if handled/opened, or false if unsupported / should trigger input fallback. */
   openProjectFolder: () => Promise<boolean>;
@@ -193,6 +208,38 @@ interface IDEContextType {
   isProblemsPanelOpen: boolean;
   setIsProblemsPanelOpen: (open: boolean) => void;
   toggleProblemsPanel: () => void;
+
+  // Integrated Terminal
+  isTerminalOpen: boolean;
+  setIsTerminalOpen: (open: boolean) => void;
+  toggleTerminal: () => void;
+  terminalHistory: TerminalEntry[];
+  terminalCwd: string;
+  isRunningCommand: boolean;
+  runTerminalCommand: (command: string) => Promise<void>;
+  clearTerminal: () => void;
+
+  // GitHub Authentication & Remote Sync
+  githubUser: GitHubUser | null;
+  githubToken: string;
+  githubRepos: GitHubRepo[];
+  isGitHubModalOpen: boolean;
+  setIsGitHubModalOpen: (open: boolean) => void;
+  isGitHubLoading: boolean;
+  githubError: string | null;
+  gitSyncMessage: string | null;
+  remoteUrl: string;
+  githubLinkedRepo: { owner: string; repo: string } | null;
+  gitBranches: string[];
+  loginWithGitHubToken: (token: string) => Promise<boolean>;
+  logoutGitHub: () => void;
+  fetchGitHubRepos: () => Promise<void>;
+  cloneGitHubRepo: (repo: GitHubRepo) => Promise<boolean>;
+  createGitHubRepo: (name: string, description: string, isPrivate: boolean) => Promise<GitHubRepo | null>;
+  publishToGitHub: (repoName: string, description: string, isPrivate: boolean) => Promise<boolean>;
+  pushToGitHub: () => Promise<boolean>;
+  pullFromGitHub: () => Promise<boolean>;
+  switchBranch: (branch: string, create?: boolean) => Promise<boolean>;
 }
 
 const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
@@ -270,7 +317,164 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [activeFileId, setActiveFileId] = useState<string>('');
   const [openFileIds, setOpenFileIds] = useState<string[]>([]);
-  const [activeModel, setActiveModel] = useState<AIModel>(AVAILABLE_MODELS[0]);
+
+  // AI Models, Custom Providers, and API Keys (persisted locally)
+  const [customModels, setCustomModels] = useState<AIModel[]>(() => {
+    try {
+      const saved = localStorage.getItem('intellicode_custom_models');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const allModels = React.useMemo(() => [...AVAILABLE_MODELS, ...customModels], [customModels]);
+
+  const [activeModel, setActiveModelState] = useState<AIModel>(() => {
+    try {
+      const savedId = localStorage.getItem('intellicode_active_model_id');
+      const savedCustom = localStorage.getItem('intellicode_custom_models');
+      const customList: AIModel[] = savedCustom ? JSON.parse(savedCustom) : [];
+      const merged = [...AVAILABLE_MODELS, ...customList];
+      if (savedId) {
+        const remappedId =
+          savedId === 'gemini-2-0-pro' || savedId === 'gemini-2.5-pro'
+            ? 'gemini-3.1-pro-preview'
+            : savedId === 'gemini-2-0-flash' || savedId === 'gemini-2.0-flash'
+              ? 'gemini-3-flash-preview'
+              : savedId;
+        const found = merged.find((m) => m.id === remappedId);
+        if (found) return found;
+      }
+    } catch {
+      // ignore
+    }
+    return AVAILABLE_MODELS[0];
+  });
+
+  const setActiveModel = (model: AIModel) => {
+    setActiveModelState(model);
+    try {
+      localStorage.setItem('intellicode_active_model_id', model.id);
+    } catch {
+      // ignore
+    }
+  };
+
+  const [apiKeys, setApiKeysState] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('intellicode_api_keys');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const setApiKey = (providerKey: string, key: string) => {
+    setApiKeysState((prev) => {
+      const next = { ...prev };
+      const trimmed = key.trim();
+      if (trimmed) {
+        next[providerKey] = trimmed;
+      } else {
+        delete next[providerKey];
+      }
+      try {
+        localStorage.setItem('intellicode_api_keys', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  const addCustomModel = (
+    input: Omit<AIModel, 'id' | 'color' | 'isCustom'> & { apiKey?: string },
+    selectAfter = true
+  ): AIModel => {
+    const providerKey =
+      input.providerKey.trim() ||
+      `custom-${input.provider.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
+    const newModel: AIModel = {
+      ...input,
+      id: `custom-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      providerKey,
+      isCustom: true,
+      color: 'from-purple-500 to-indigo-600',
+    };
+    setCustomModels((prev) => {
+      const next = [...prev, newModel];
+      try {
+        localStorage.setItem('intellicode_custom_models', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    if (input.apiKey !== undefined && input.apiKey.trim()) {
+      setApiKey(providerKey, input.apiKey.trim());
+    }
+    if (selectAfter) {
+      setActiveModel(newModel);
+    }
+    return newModel;
+  };
+
+  const removeCustomModel = (modelId: string) => {
+    setCustomModels((prev) => {
+      const next = prev.filter((m) => m.id !== modelId);
+      try {
+        localStorage.setItem('intellicode_custom_models', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      if (activeModel.id === modelId) {
+        setActiveModel(AVAILABLE_MODELS[0]);
+      }
+      return next;
+    });
+  };
+
+  const [isGeneratingAI, setIsGeneratingAI] = useState<boolean>(false);
+
+  // Integrated Terminal State
+  const [isTerminalOpen, setIsTerminalOpen] = useState<boolean>(false);
+  const toggleTerminal = () => setIsTerminalOpen((prev) => !prev);
+  const [terminalHistory, setTerminalHistory] = useState<TerminalEntry[]>([
+    {
+      id: 'term-welcome',
+      cwd: '',
+      stdout: 'IntelliCode Integrated Terminal ready. Run commands (npm, node, python, git, dir/ls).',
+      stderr: '',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    },
+  ]);
+  const [terminalCwd, setTerminalCwd] = useState<string>('');
+  const [isRunningCommand, setIsRunningCommand] = useState<boolean>(false);
+
+  // GitHub Authentication & Remote Sync State
+  const [githubToken, setGithubToken] = useState<string>(() => {
+    try {
+      return localStorage.getItem('intellicode_github_token') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [githubUser, setGithubUser] = useState<GitHubUser | null>(() => {
+    try {
+      const raw = localStorage.getItem('intellicode_github_user');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([]);
+  const [isGitHubModalOpen, setIsGitHubModalOpen] = useState<boolean>(false);
+  const [isGitHubLoading, setIsGitHubLoading] = useState<boolean>(false);
+  const [githubError, setGithubError] = useState<string | null>(null);
+  const [gitSyncMessage, setGitSyncMessage] = useState<string | null>(null);
+  const [remoteUrl, setRemoteUrl] = useState<string>('');
+  const [githubLinkedRepo, setGithubLinkedRepo] = useState<{ owner: string; repo: string } | null>(null);
+  const [gitBranches, setGitBranches] = useState<string[]>([]);
   const [masterPrompt, setMasterPrompt] = useState<MasterPromptData>({
     ...INITIAL_MASTER_PROMPT,
     projectName: 'workspace',
@@ -338,8 +542,8 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     {
       id: 'msg-init',
       sender: 'assistant',
-      model: 'Claude 3.5 Sonnet',
-      content: 'Workspace ready. Create a file or open a local folder to begin.',
+      model: activeModel.name,
+      content: 'AI Coding Assistant ready. Select any model (Gemini, Claude, GPT-4o, DeepSeek, or Custom Provider), configure an API key when ready, and ask me to explain code, fix errors, or build a complete project.',
       timestamp: 'Just now',
       tokensUsed: 0,
       tokensSaved: 0,
@@ -508,6 +712,21 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
+    // 2.5. Direct write-back via host workspacePath (for path-opened or GitHub-cloned workspaces)
+    if (workspacePath) {
+      const res = await gitService.writeWorkspaceFile(workspacePath, file.path, file.content);
+      if (res.success) {
+        setFiles(prev => applyUpdatedAst(prev.map(f => f.id === fileId ? { ...f, isDirty: false, savedContent: f.content } : f)));
+        if (isGitRepo && repoRoot) {
+          refreshGitStatus();
+        }
+        return;
+      } else if (res.error) {
+        setSaveError(`Failed to save "${file.name}" to disk: ${res.error}`);
+        return;
+      }
+    }
+
     // 3. Honest fallback for unsupported browsers, uploaded folder input, or mock project mode:
     // Exports/downloads the file to disk via browser download without pretending direct write succeeded
     try {
@@ -546,13 +765,19 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.error('Could not create file on disk:', err);
         return null;
       }
+    } else if (workspacePath) {
+      const res = await gitService.writeWorkspaceFile(workspacePath, path, initialContent);
+      if (!res.success) {
+        setSaveError(`Failed to create "${fileName}" on disk: ${res.error || 'Write error'}`);
+        return null;
+      }
     }
 
     const newFile: ProjectFile = {
-      id: 'file-' + Date.now(),
+      id: 'file-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
       name: fileName,
       path,
-      language: ext === 'c' || ext === 'h' ? 'c' : ext === 'py' ? 'python' : ext === 'json' ? 'json' : 'typescript',
+      language: ext === 'c' || ext === 'h' ? 'c' : ext === 'py' ? 'python' : ext === 'json' ? 'json' : ext === 'html' ? 'html' : ext === 'css' ? 'css' : ext === 'md' ? 'markdown' : 'typescript',
       content: initialContent,
       savedContent: initialContent,
       isDirty: false,
@@ -566,7 +791,31 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setOpenFileIds(prev => prev.includes(newFile.id) ? prev : [...prev, newFile.id]);
     setActiveFileId(newFile.id);
+    if (isGitRepo && repoRoot) refreshGitStatus();
     return newFile;
+  };
+
+  const createFolder = async (folderPath: string): Promise<boolean> => {
+    const clean = folderPath.trim().replace(/^\/+|\/+$/g, '');
+    if (!clean) return false;
+
+    if (directoryHandleRef.current) {
+      try {
+        await createFileOnDisk(directoryHandleRef.current, `${clean}/.gitkeep`, '');
+      } catch (err: any) {
+        setSaveError(`Failed to create folder "${clean}": ${err?.message || err}`);
+        return false;
+      }
+    } else if (workspacePath) {
+      const res = await gitService.mkdirWorkspace(workspacePath, clean);
+      if (!res.success) {
+        setSaveError(`Failed to create folder "${clean}": ${res.error}`);
+        return false;
+      }
+    }
+
+    await createFile('.gitkeep', clean, '// folder placeholder\n');
+    return true;
   };
 
   const deleteFile = async (fileId: string): Promise<boolean> => {
@@ -597,6 +846,12 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } else if (file.fileHandle) {
       setSaveError(`Cannot delete "${file.name}" on disk: root directory handle is not available.`);
       return false;
+    } else if (workspacePath) {
+      const res = await gitService.deleteWorkspaceFile(workspacePath, file.path);
+      if (!res.success) {
+        setSaveError(`Failed to delete "${file.name}" from disk: ${res.error}`);
+        return false;
+      }
     }
 
     // Disk deletion succeeded (or mock mode): update state
@@ -605,6 +860,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return applyUpdatedAst(updated);
     });
     closeFile(fileId);
+    if (isGitRepo && repoRoot) refreshGitStatus();
     return true;
   };
 
@@ -651,6 +907,12 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setSaveError(`Cannot rename "${file.name}" on disk: move is not supported in this browser without a directory handle.`);
         return false;
       }
+    } else if (workspacePath) {
+      const res = await gitService.renameWorkspaceFile(workspacePath, file.path, newPath);
+      if (!res.success) {
+        setSaveError(`Failed to rename "${file.name}" on disk: ${res.error}`);
+        return false;
+      }
     }
 
     // Disk rename succeeded (or mock mode): update state
@@ -683,6 +945,8 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setIsGitRepo(statusRes.isGit);
         if (statusRes.isGit) {
           if (statusRes.branch) setGitBranch(statusRes.branch);
+          setRemoteUrl(statusRes.remoteUrl || '');
+          setGithubLinkedRepo(statusRes.githubRepo || null);
           setStagedFiles(statusRes.stagedFiles || []);
           setUnstagedFiles(statusRes.unstagedFiles || []);
 
@@ -690,18 +954,27 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const stagedPaths = (statusRes.stagedFiles || []).map(f => f.path);
           setStagedFileIds(files.filter(f => stagedPaths.includes(f.path)).map(f => f.id));
 
-          // Fetch genuine repository commits
-          const logRes = await gitService.getLog(root, 25);
+          // Fetch branches and genuine repository commits
+          const [logRes, branchesRes] = await Promise.all([
+            gitService.getLog(root, 25),
+            gitService.getBranches(root),
+          ]);
           if (logRes.success) {
             setGitCommits(logRes.commits || []);
           } else if (logRes.error) {
             setGitCommits([]);
+          }
+          if (branchesRes.success) {
+            setGitBranches(branchesRes.branches || []);
           }
         } else {
           setStagedFiles([]);
           setUnstagedFiles([]);
           setGitCommits([]);
           setGitBranch('');
+          setRemoteUrl('');
+          setGithubLinkedRepo(null);
+          setGitBranches([]);
         }
       } else if (statusRes.error) {
         setGitError(statusRes.error);
@@ -1020,7 +1293,12 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (isGitRepo && repoRoot) {
       setGitLoading(true);
       setGitError(null);
-      const res = await gitService.commit(repoRoot, trimmed);
+      const res = await gitService.commit(
+        repoRoot,
+        trimmed,
+        githubUser?.name || githubUser?.login,
+        githubUser?.email
+      );
       if (!res.success) {
         setGitError(res.error || 'Failed to commit');
         setGitLoading(false);
@@ -1544,64 +1822,459 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return result;
   };
 
+  const runTerminalCommand = async (command: string): Promise<void> => {
+    const activeCwd = terminalCwd || workspacePath || repoRoot || '';
+    setIsRunningCommand(true);
+    const res = await gitService.execTerminal(command, activeCwd || undefined);
+    setTerminalCwd(res.cwd || activeCwd);
+    setTerminalHistory(prev => [
+      ...prev,
+      {
+        id: 'term-' + Date.now(),
+        command,
+        cwd: res.cwd || activeCwd,
+        stdout: res.stdout || '',
+        stderr: res.stderr || '',
+        exitCode: res.exitCode,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      },
+    ]);
+    setIsRunningCommand(false);
+    // Refresh workspace or git status if a command might have modified files
+    if (isGitRepo && repoRoot) {
+      refreshGitStatus();
+    }
+  };
+
+  const clearTerminal = () => {
+    setTerminalHistory([]);
+  };
+
+  const fetchGitHubRepos = async (overrideToken?: string): Promise<void> => {
+    const tok = overrideToken || githubToken;
+    if (!tok) return;
+    setIsGitHubLoading(true);
+    setGithubError(null);
+    const res = await githubService.listRepos(tok);
+    if (res.success && res.repos) {
+      setGithubRepos(res.repos);
+    } else if (res.error) {
+      setGithubError(res.error);
+    }
+    setIsGitHubLoading(false);
+  };
+
+  const loginWithGitHubToken = async (token: string): Promise<boolean> => {
+    const cleanToken = token.trim();
+    if (!cleanToken) return false;
+    setIsGitHubLoading(true);
+    setGithubError(null);
+    const res = await githubService.verifyToken(cleanToken);
+    if (!res.success || !res.user) {
+      setGithubError(res.error || 'Failed to authenticate with GitHub');
+      setIsGitHubLoading(false);
+      return false;
+    }
+    setGithubToken(cleanToken);
+    setGithubUser(res.user);
+    try {
+      localStorage.setItem('intellicode_github_token', cleanToken);
+      localStorage.setItem('intellicode_github_user', JSON.stringify(res.user));
+    } catch {
+      // ignore
+    }
+    await fetchGitHubRepos(cleanToken);
+    setIsGitHubLoading(false);
+    return true;
+  };
+
+  const logoutGitHub = () => {
+    setGithubToken('');
+    setGithubUser(null);
+    setGithubRepos([]);
+    setGithubError(null);
+    try {
+      localStorage.removeItem('intellicode_github_token');
+      localStorage.removeItem('intellicode_github_user');
+    } catch {
+      // ignore
+    }
+  };
+
+  const cloneGitHubRepo = async (repo: GitHubRepo): Promise<boolean> => {
+    setIsGitHubLoading(true);
+    setGithubError(null);
+    const res = await githubService.cloneRepo({
+      token: githubToken || undefined,
+      cloneUrl: repo.cloneUrl,
+      repoName: repo.name,
+      owner: repo.owner,
+    });
+    if (!res.success || !res.workspacePath) {
+      setGithubError(res.error || 'Failed to clone repository');
+      setIsGitHubLoading(false);
+      return false;
+    }
+
+    const repoFiles: ProjectFile[] =
+      res.files && res.files.length > 0
+        ? res.files
+        : [
+            {
+              id: 'file-readme-' + Date.now(),
+              name: 'README.md',
+              path: 'README.md',
+              language: 'markdown',
+              content: `# ${repo.name}\n\n${repo.description || 'Repository cloned via IntelliCode IDE.'}\n`,
+              savedContent: `# ${repo.name}\n\n${repo.description || 'Repository cloned via IntelliCode IDE.'}\n`,
+              isDirty: false,
+            },
+          ];
+
+    loadExternalFiles(repoFiles, repo.name, undefined, res.workspacePath);
+    setTerminalCwd(res.workspacePath);
+    setRemoteUrl(repo.cloneUrl);
+    setGithubLinkedRepo({ owner: repo.owner, repo: repo.name });
+    setActiveView('editor');
+    setIsGitHubModalOpen(false);
+    setIsGitHubLoading(false);
+    return true;
+  };
+
+  const createGitHubRepo = async (
+    name: string,
+    description: string,
+    isPrivate: boolean
+  ): Promise<GitHubRepo | null> => {
+    if (!githubToken) {
+      setGithubError('Please sign in with GitHub first.');
+      return null;
+    }
+    setIsGitHubLoading(true);
+    setGithubError(null);
+    const res = await githubService.createRepo(githubToken, name, description, isPrivate);
+    if (!res.success || !res.repo) {
+      setGithubError(res.error || 'Failed to create repository');
+      setIsGitHubLoading(false);
+      return null;
+    }
+    setGithubRepos(prev => [res.repo!, ...prev]);
+    setIsGitHubLoading(false);
+    return res.repo;
+  };
+
+  const publishToGitHub = async (
+    repoName: string,
+    description: string,
+    isPrivate: boolean
+  ): Promise<boolean> => {
+    if (!githubToken || !githubUser) {
+      setGithubError('Please sign in with GitHub first.');
+      return false;
+    }
+    setGitLoading(true);
+    setGitError(null);
+    setGitSyncMessage(null);
+    const res = await githubService.publishWorkspace({
+      workspacePath,
+      repoName,
+      description,
+      isPrivate,
+      token: githubToken,
+      authorName: githubUser.name || githubUser.login,
+      authorEmail: githubUser.email,
+      files: files.map(f => ({ path: f.path, content: f.content })),
+    });
+
+    if (!res.success || !res.repoRoot) {
+      setGitError(res.error || 'Failed to publish repository to GitHub');
+      setGitLoading(false);
+      return false;
+    }
+
+    setWorkspacePath(res.workspacePath || res.repoRoot);
+    setRepoRoot(res.repoRoot);
+    setIsGitRepo(true);
+    setGitBranch(res.branch || 'main');
+    setRemoteUrl(res.remoteUrl || '');
+    if (res.repo) {
+      setGithubLinkedRepo({ owner: res.repo.owner, repo: res.repo.name });
+      setGithubRepos(prev => [res.repo!, ...prev]);
+    }
+    setMasterPrompt(prev => ({
+      ...prev,
+      projectName: repoName,
+      lastSynced: 'Published to GitHub',
+    }));
+    setGitSyncMessage(`Published to GitHub (${isPrivate ? 'Private' : 'Public'})`);
+    await refreshGitStatus(res.repoRoot);
+    setGitLoading(false);
+    return true;
+  };
+
+  const pushToGitHub = async (): Promise<boolean> => {
+    if (!repoRoot) {
+      setGitError('No active Git repository on disk.');
+      return false;
+    }
+    setGitLoading(true);
+    setGitError(null);
+    setGitSyncMessage(null);
+    const res = await gitService.push(repoRoot, gitBranch || undefined, githubToken || undefined);
+    if (!res.success) {
+      setGitError(res.error || 'Failed to push to GitHub');
+      setGitLoading(false);
+      return false;
+    }
+    setGitSyncMessage(res.output || `Pushed to origin/${gitBranch || 'main'}`);
+    await refreshGitStatus(repoRoot);
+    setGitLoading(false);
+    return true;
+  };
+
+  const pullFromGitHub = async (): Promise<boolean> => {
+    if (!repoRoot) {
+      setGitError('No active Git repository on disk.');
+      return false;
+    }
+    setGitLoading(true);
+    setGitError(null);
+    setGitSyncMessage(null);
+    const res = await gitService.pull(repoRoot, gitBranch || undefined, githubToken || undefined);
+    if (!res.success) {
+      setGitError(res.error || 'Failed to pull from GitHub');
+      setGitLoading(false);
+      return false;
+    }
+    setGitSyncMessage(res.output || `Pulled from origin/${gitBranch || 'main'}`);
+    // Reload updated workspace files from disk
+    if (workspacePath) {
+      const folderRes = await gitService.readWorkspaceFolder(workspacePath);
+      if (folderRes.success && folderRes.files) {
+        setFiles(folderRes.files);
+      }
+    }
+    await refreshGitStatus(repoRoot);
+    setGitLoading(false);
+    return true;
+  };
+
+  const switchBranch = async (branch: string, create = false): Promise<boolean> => {
+    if (!repoRoot) return false;
+    setGitLoading(true);
+    setGitError(null);
+    const res = await gitService.checkout(repoRoot, branch, create);
+    if (!res.success) {
+      setGitError(res.error || 'Failed to switch branch');
+      setGitLoading(false);
+      return false;
+    }
+    setGitBranch(branch);
+    if (workspacePath) {
+      const folderRes = await gitService.readWorkspaceFolder(workspacePath);
+      if (folderRes.success && folderRes.files) {
+        setFiles(folderRes.files);
+      }
+    }
+    await refreshGitStatus(repoRoot);
+    setGitLoading(false);
+    return true;
+  };
+
+  const applyGeneratedFiles = async (genFiles: AIGeneratedFile[]): Promise<number> => {
+    if (!genFiles || genFiles.length === 0) return 0;
+
+    // If workspace is empty and no workspacePath is set yet, create a real workspace directory on disk if possible
+    let activeHostPath = workspacePath;
+    if (!activeHostPath && !directoryHandleRef.current && files.length === 0) {
+      const folderRes = await gitService.createWorkspaceDir(
+        masterPrompt.projectName && masterPrompt.projectName !== 'workspace'
+          ? masterPrompt.projectName
+          : `ai-project-${Date.now().toString().slice(-4)}`,
+        genFiles.map(g => ({ path: g.path, content: g.content }))
+      );
+      if (folderRes.success && folderRes.workspacePath) {
+        activeHostPath = folderRes.workspacePath;
+        setWorkspacePath(folderRes.workspacePath);
+        setTerminalCwd(folderRes.workspacePath);
+        setMasterPrompt(prev => ({
+          ...prev,
+          projectName: folderRes.folderName || prev.projectName,
+        }));
+      }
+    }
+
+    let appliedCount = 0;
+    const updatedFiles = [...files];
+    const newlyOpenedIds: string[] = [...openFileIds];
+    let lastTouchedId = activeFileId;
+
+    for (const gf of genFiles) {
+      const cleanPath = gf.path.replace(/\\/g, '/').replace(/^\/+/, '');
+      if (!cleanPath) continue;
+      const fileName = cleanPath.split('/').pop() || cleanPath;
+      const ext = fileName.split('.').pop()?.toLowerCase() || 'ts';
+      const lang =
+        gf.language ||
+        (ext === 'c' || ext === 'h'
+          ? 'c'
+          : ext === 'py'
+            ? 'python'
+            : ext === 'json'
+              ? 'json'
+              : ext === 'html'
+                ? 'html'
+                : ext === 'css'
+                  ? 'css'
+                  : ext === 'md'
+                    ? 'markdown'
+                    : 'typescript');
+
+      // Persist to disk if handle or workspacePath exists
+      if (directoryHandleRef.current) {
+        try {
+          await createFileOnDisk(directoryHandleRef.current, cleanPath, gf.content);
+        } catch (err) {
+          console.warn('Could not write AI file to directory handle:', err);
+        }
+      } else if (activeHostPath) {
+        await gitService.writeWorkspaceFile(activeHostPath, cleanPath, gf.content);
+      }
+
+      const existingIdx = updatedFiles.findIndex(f => f.path === cleanPath);
+      if (existingIdx >= 0) {
+        updatedFiles[existingIdx] = {
+          ...updatedFiles[existingIdx],
+          content: gf.content,
+          savedContent: activeHostPath || directoryHandleRef.current ? gf.content : updatedFiles[existingIdx].savedContent,
+          isDirty: !(activeHostPath || directoryHandleRef.current),
+          isModified: true,
+        };
+        lastTouchedId = updatedFiles[existingIdx].id;
+        if (!newlyOpenedIds.includes(lastTouchedId)) newlyOpenedIds.push(lastTouchedId);
+      } else {
+        const newId = `file-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        updatedFiles.push({
+          id: newId,
+          name: fileName,
+          path: cleanPath,
+          language: lang,
+          content: gf.content,
+          savedContent: gf.content,
+          isDirty: false,
+          isModified: true,
+        });
+        lastTouchedId = newId;
+        newlyOpenedIds.push(newId);
+      }
+      appliedCount++;
+    }
+
+    setFiles(applyUpdatedAst(updatedFiles));
+    setOpenFileIds(newlyOpenedIds);
+    if (lastTouchedId) {
+      setActiveFileId(lastTouchedId);
+      setActiveView('editor');
+    }
+    if (isGitRepo && repoRoot) {
+      refreshGitStatus();
+    }
+    return appliedCount;
+  };
+
   const sendChatMessage = async (content: string) => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+
     const userMsg: ChatMessage = {
       id: 'msg-' + Date.now(),
       sender: 'user',
-      content,
+      content: trimmed,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    setChatMessages(prev => [...prev, userMsg]);
+    const historySnapshot = [...chatMessages, userMsg];
+    setChatMessages(historySnapshot);
 
-    await new Promise(r => setTimeout(r, 750));
-
-    const savedInThisCall = 16400;
-    setTokensSaved(prev => prev + savedInThisCall);
-
-    let assistantResponse: ChatMessage;
-
-    if (content.toLowerCase().includes('cypher') || content.toLowerCase().includes('mcp') || content.toLowerCase().includes('cbm')) {
-      assistantResponse = {
-        id: 'msg-' + (Date.now() + 1),
-        sender: 'assistant',
-        model: activeModel.name,
-        content: `I analyzed the **codebase-memory-mcp** Knowledge Graph:
-
-- **Target Analyzed**: \`cbm_cypher_execute()\` in \`src/cypher/cypher.c\`
-- **Inbound Callers**:
-  - \`src/mcp/mcp.c\` (Tool dispatch for \`query_cypher\`)
-  - \`src/cli/cli.c\` (One-shot command runner)
-  - \`tests/test_cypher.c\` (Unit test suite)
-- **Token Economy**: Avoided re-reading 28 C source files; retrieved graph nodes in 0.68ms!`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        tokensUsed: 290,
-        tokensSaved: savedInThisCall,
-        contextContinuity: true,
-        affectedComponents: ['mcp.c', 'cli.c', 'store.c'],
-        suggestedAction: {
-          type: 'view_graph',
-          label: 'Inspect in Knowledge Graph'
-        }
-      };
-    } else {
-      assistantResponse = {
-        id: 'msg-' + (Date.now() + 1),
-        sender: 'assistant',
-        model: activeModel.name,
-        content: `Task acknowledged in **${activeModel.name}**.
-
-Using persistent Knowledge Graph for **${masterPrompt.projectName}**:
-- Tree-Sitter AST & SQLite cache active.
-- Context handover: 0 tokens spent on re-reading files.`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        tokensUsed: 240,
-        tokensSaved: savedInThisCall,
-        contextContinuity: true
-      };
+    const isSystemEvent = trimmed.startsWith('[SYSTEM EVENT:');
+    if (isSystemEvent) {
+      return;
     }
 
-    setChatMessages(prev => [...prev, assistantResponse]);
+    const activeKey = apiKeys[activeModel.providerKey] || '';
+    if (activeModel.requiresApiKey !== false && !activeKey) {
+      setChatMessages(prev => [
+        ...prev,
+        {
+          id: 'msg-key-' + (Date.now() + 1),
+          sender: 'assistant',
+          model: activeModel.name,
+          content: `API key required for **${activeModel.name}** (${activeModel.provider}). Add your API key below or in the Model Gateway to run prompts and build projects with this model.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isError: true,
+          needsApiKey: {
+            providerKey: activeModel.providerKey,
+            providerName: activeModel.provider,
+          },
+        },
+      ]);
+      return;
+    }
+
+    setIsGeneratingAI(true);
+    try {
+      const activeFile = files.find(f => f.id === activeFileId);
+      const systemPrompt = buildWorkspaceSystemPrompt({
+        projectName: masterPrompt.projectName || 'workspace',
+        files,
+        activeFile,
+        diagnostics,
+      });
+
+      const result = await sendModelRequest({
+        model: activeModel,
+        apiKey: activeKey,
+        messages: historySnapshot,
+        systemPrompt,
+      });
+
+      if (!result.success || !result.content) {
+        setChatMessages(prev => [
+          ...prev,
+          {
+            id: 'msg-err-' + (Date.now() + 1),
+            sender: 'assistant',
+            model: activeModel.name,
+            content: `Error from ${activeModel.name}: ${result.error || 'No response received.'}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isError: true,
+          },
+        ]);
+        return;
+      }
+
+      const generatedFiles = parseGeneratedFilesFromResponse(result.content);
+      const usedTokens = result.usage?.totalTokens || 0;
+      if (usedTokens > 0) {
+        setTokensSaved(prev => prev + Math.max(0, 4000 - usedTokens));
+      }
+
+      setChatMessages(prev => [
+        ...prev,
+        {
+          id: 'msg-' + (Date.now() + 1),
+          sender: 'assistant',
+          model: activeModel.name,
+          content: result.content!,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          tokensUsed: usedTokens,
+          contextContinuity: true,
+          generatedFiles: generatedFiles.length > 0 ? generatedFiles : undefined,
+        },
+      ]);
+    } finally {
+      setIsGeneratingAI(false);
+    }
   };
 
   return (
@@ -1619,6 +2292,14 @@ Using persistent Knowledge Graph for **${masterPrompt.projectName}**:
         updateFileContent,
         activeModel,
         setActiveModel,
+        allModels,
+        customModels,
+        addCustomModel,
+        removeCustomModel,
+        apiKeys,
+        setApiKey,
+        isGeneratingAI,
+        applyGeneratedFiles,
         masterPrompt,
         setMasterPrompt,
         graphNodes,
@@ -1651,6 +2332,7 @@ Using persistent Knowledge Graph for **${masterPrompt.projectName}**:
         isTracingPath,
         traceCallPath,
         createFile,
+        createFolder,
         deleteFile,
         renameFile,
         saveFile,
@@ -1708,7 +2390,35 @@ Using persistent Knowledge Graph for **${masterPrompt.projectName}**:
         unsupportedFiles,
         isProblemsPanelOpen,
         setIsProblemsPanelOpen,
-        toggleProblemsPanel
+        toggleProblemsPanel,
+        isTerminalOpen,
+        setIsTerminalOpen,
+        toggleTerminal,
+        terminalHistory,
+        terminalCwd,
+        isRunningCommand,
+        runTerminalCommand,
+        clearTerminal,
+        githubUser,
+        githubToken,
+        githubRepos,
+        isGitHubModalOpen,
+        setIsGitHubModalOpen,
+        isGitHubLoading,
+        githubError,
+        gitSyncMessage,
+        remoteUrl,
+        githubLinkedRepo,
+        gitBranches,
+        loginWithGitHubToken,
+        logoutGitHub,
+        fetchGitHubRepos,
+        cloneGitHubRepo,
+        createGitHubRepo,
+        publishToGitHub,
+        pushToGitHub,
+        pullFromGitHub,
+        switchBranch,
       }}
     >
       {children}

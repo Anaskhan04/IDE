@@ -1,5 +1,5 @@
 import React from 'react';
-import { Code2, Layers, Network, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Code2, Layers, Network, ShieldAlert, ShieldCheck, Terminal } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 import type { ActiveView } from '../../types/ide';
 
@@ -50,6 +50,8 @@ export const WorkspaceModeTabs: React.FC = () => {
     diagnosticsSummary,
     toggleProblemsPanel,
     isProblemsPanelOpen,
+    isTerminalOpen,
+    toggleTerminal,
   } = useIDE();
   const selectedMode = modes.some((mode) => mode.id === activeView) ? activeView : 'editor';
 
@@ -82,7 +84,20 @@ export const WorkspaceModeTabs: React.FC = () => {
           );
         })}
       </div>
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-2">
+        <button
+          type="button"
+          onClick={toggleTerminal}
+          className={`ide-focus-ring flex items-center gap-1.5 rounded-ide-control border px-2 py-1 text-[11px] font-medium transition-colors ${
+            isTerminalOpen
+              ? 'border-ide-focus bg-ide-selected text-ide-strong'
+              : 'border-ide-border bg-ide-surface/60 text-ide-muted hover:bg-ide-hover hover:text-ide-text'
+          }`}
+          title="Toggle Integrated Terminal (Ctrl+`)"
+        >
+          <Terminal className="h-3 w-3 text-ide-cyan" aria-hidden="true" />
+          <span className="font-sans">Terminal</span>
+        </button>
         <button
           type="button"
           onClick={toggleProblemsPanel}

@@ -177,16 +177,30 @@ export interface GraphEdge {
   confidence?: number;
 }
 
+export type AIProviderFormat = 'gemini' | 'openai' | 'anthropic';
+
 export interface AIModel {
   id: string;
+  modelId: string;
   name: string;
-  provider: 'Anthropic' | 'OpenAI' | 'Google' | 'DeepSeek' | 'Meta';
+  provider: string;
+  providerKey: string;
+  apiFormat: AIProviderFormat;
+  baseUrl?: string;
+  requiresApiKey?: boolean;
+  isCustom?: boolean;
   version: string;
   badge: string;
   contextWindow: string;
   costPer1k: string;
   description: string;
   color: string;
+}
+
+export interface AIGeneratedFile {
+  path: string;
+  content: string;
+  language: string;
 }
 
 export interface ChatMessage {
@@ -199,10 +213,49 @@ export interface ChatMessage {
   tokensSaved?: number;
   contextContinuity?: boolean;
   affectedComponents?: string[];
+  generatedFiles?: AIGeneratedFile[];
+  isError?: boolean;
+  needsApiKey?: {
+    providerKey: string;
+    providerName: string;
+  };
   suggestedAction?: {
     type: 'run_tests' | 'view_graph' | 'view_impact' | 'apply_patch';
     label: string;
   };
+}
+
+export interface GitHubUser {
+  login: string;
+  name: string;
+  avatarUrl: string;
+  htmlUrl: string;
+  email: string;
+  scopes?: string;
+}
+
+export interface GitHubRepo {
+  id: number;
+  name: string;
+  fullName: string;
+  private: boolean;
+  description: string;
+  htmlUrl: string;
+  cloneUrl: string;
+  defaultBranch: string;
+  updatedAt: string;
+  language: string;
+  owner: string;
+}
+
+export interface TerminalEntry {
+  id: string;
+  command?: string;
+  cwd: string;
+  stdout: string;
+  stderr: string;
+  exitCode?: number;
+  timestamp: string;
 }
 
 export interface CIAResult {
