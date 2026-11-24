@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   AlertCircle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
   CaseSensitive,
   Check,
   ChevronDown,
@@ -17,6 +19,8 @@ import {
   FolderPlus,
   GitBranch,
   GitCommit as GitCommitIcon,
+  Github,
+  KeyRound,
   Minus,
   MoreHorizontal,
   Plus,
@@ -28,6 +32,7 @@ import {
   Sliders,
   Trash2,
   Undo2,
+  UploadCloud,
   WholeWord,
   X,
 } from 'lucide-react';
@@ -65,6 +70,7 @@ export const Sidebar: React.FC = () => {
     activeFileId,
     openFile,
     createFile,
+    createFolder,
     deleteFile,
     renameFile,
     loadExternalFiles,
@@ -83,6 +89,10 @@ export const Sidebar: React.FC = () => {
     unstagedFiles,
     gitLoading,
     gitError,
+    gitSyncMessage,
+    remoteUrl,
+    githubLinkedRepo,
+    gitBranches,
     refreshGitStatus,
     initGitRepo,
     stageFile,
@@ -92,6 +102,13 @@ export const Sidebar: React.FC = () => {
     discardChanges,
     gitCommits,
     commitStaged,
+    pushToGitHub,
+    pullFromGitHub,
+    switchBranch,
+    githubUser,
+    setIsGitHubModalOpen,
+    apiKeys,
+    setIsModelSwitchingModalOpen,
     diffTargetFileId,
     setDiffTargetFileId,
     diffTargetFilePath,
@@ -517,11 +534,28 @@ export const Sidebar: React.FC = () => {
   const handleCommit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!commitMessage.trim() || effectiveStaged.length === 0) return;
+    const count = effectiveStaged.length;
     const success = await commitStaged(commitMessage.trim());
     if (success) {
-      setCommitSuccessMessage(`Committed ${effectiveStaged.length} file(s)`);
+      setCommitSuccessMessage(`Committed ${count} file(s)`);
       setCommitMessage('');
       setTimeout(() => setCommitSuccessMessage(null), 3000);
+    }
+  };
+
+  const handleCommitAndPush = async () => {
+    if (!commitMessage.trim()) return;
+    if (effectiveStaged.length === 0 && effectiveUnstaged.length > 0) {
+      await stageAll();
+    }
+    const ok = await commitStaged(commitMessage.trim());
+    if (ok) {
+      setCommitMessage('');
+      const pushed = await pushToGitHub();
+      if (pushed) {
+        setCommitSuccessMessage('Committed & Pushed to GitHub');
+        setTimeout(() => setCommitSuccessMessage(null), 3500);
+      }
     }
   };
 
@@ -571,7 +605,7 @@ export const Sidebar: React.FC = () => {
                   type="button"
                   onClick={() => {
                     const folderName = window.prompt('Enter folder path (e.g. src/utils):');
-                    if (folderName) createFile('.gitkeep', folderName, '// folder placeholder');
+                    if (folderName) createFolder(folderName);
                   }}
                   className="ide-focus-ring flex h-7 w-7 items-center justify-center text-ide-muted hover:bg-ide-hover hover:text-ide-text"
                   title="New folder"
@@ -877,16 +911,30 @@ export const Sidebar: React.FC = () => {
         {/* 3. SOURCE CONTROL (GIT) VIEW */}
         {sidebarView === 'git' && (
           <div className="flex h-full flex-col min-h-0">
-            {/* Header */}
+            {/* Git Header Actions */}
             <div className="flex h-10 shrink-0 items-center justify-between border-b border-ide-border px-3">
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ide-muted">Source Control</span>
-              <div className="flex items-center gap-1.5 text-[11px] font-mono">
+              <div className="flex items-center gap-1 text-[11px] font-mono">
                 {isGitRepo ? (
                   <>
-                    <div className="flex items-center gap-1 text-ide-focus">
-                      <GitBranch className="h-3 w-3" />
-                      <span className="truncate max-w-[95px]" title={`Branch: ${gitBranch || 'HEAD'}`}>{gitBranch || 'HEAD'}</span>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => pullFromGitHub()}
+                      disabled={gitLoading}
+                      className="ide-focus-ring p-1 text-ide-muted hover:text-ide-text rounded"
+                      title="Pull from GitHub"
+                    >
+                      <ArrowDownToLine className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => pushToGitHub()}
+                      disabled={gitLoading}
+                      className="ide-focus-ring p-1 text-ide-muted hover:text-ide-cyan rounded"
+                      title="Push to GitHub"
+                    >
+                      <ArrowUpFromLine className="h-3.5 w-3.5" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => refreshGitStatus()}
@@ -897,13 +945,75 @@ export const Sidebar: React.FC = () => {
                       <RotateCcw className={`h-3 w-3 ${gitLoading ? 'animate-spin text-ide-focus' : ''}`} />
                     </button>
                   </>
-                ) : isGitRepo === false ? (
-                  <span className="text-ide-subtle text-[10px]">No Git Repo</span>
                 ) : (
-                  <span className="text-ide-subtle text-[10px]">{gitLoading ? 'Checking...' : 'Idle'}</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsGitHubModalOpen(true)}
+                    className="ide-focus-ring flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ide-focus hover:bg-ide-hover"
+                    title="Open GitHub Repositories"
+                  >
+                    <Github className="h-3 w-3" />
+                    <span>GitHub</span>
+                  </button>
                 )}
               </div>
             </div>
+
+            {/* Branch & Remote Status Bar when Git Repo is active */}
+            {isGitRepo && (
+              <div className="flex items-center justify-between gap-2 border-b border-ide-border bg-ide-surface/50 px-3 py-1.5 font-mono text-[10px]">
+                <div className="flex min-w-0 items-center gap-1.5 text-ide-focus">
+                  <GitBranch className="h-3 w-3 shrink-0" />
+                  {gitBranches.length > 1 ? (
+                    <select
+                      value={gitBranch}
+                      onChange={(e) => switchBranch(e.target.value)}
+                      className="min-w-0 bg-transparent text-ide-strong outline-none cursor-pointer"
+                      aria-label="Switch git branch"
+                    >
+                      {gitBranches.map((b) => (
+                        <option key={b} value={b} className="bg-ide-panel text-ide-text">
+                          {b}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="truncate font-semibold">{gitBranch || 'main'}</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newB = window.prompt('Create new branch:');
+                      if (newB) switchBranch(newB.trim(), true);
+                    }}
+                    className="text-ide-subtle hover:text-ide-text"
+                    title="Create new branch"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
+                </div>
+
+                {githubLinkedRepo ? (
+                  <span className="truncate text-ide-emerald" title={remoteUrl}>
+                    {githubLinkedRepo.owner}/{githubLinkedRepo.repo}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsGitHubModalOpen(true)}
+                    className="text-ide-amber hover:underline shrink-0"
+                  >
+                    Link GitHub
+                  </button>
+                )}
+              </div>
+            )}
+
+            {gitSyncMessage && (
+              <div className="border-b border-ide-emerald/30 bg-ide-emerald/10 px-3 py-1.5 font-mono text-[10px] text-ide-emerald">
+                {gitSyncMessage}
+              </div>
+            )}
 
             {/* Git Error Notice */}
             {gitError && (
@@ -939,15 +1049,23 @@ export const Sidebar: React.FC = () => {
                   type="button"
                   onClick={() => initGitRepo()}
                   disabled={gitLoading}
-                  className="ide-focus-ring mt-4 flex items-center justify-center gap-1.5 rounded-ide-control bg-ide-focus px-3 py-1.5 text-xs font-semibold text-white hover:bg-ide-focus/90 disabled:opacity-50 transition-opacity"
+                  className="ide-focus-ring mt-4 flex w-full max-w-[200px] items-center justify-center gap-1.5 rounded-ide-control bg-ide-focus px-3 py-1.5 text-xs font-semibold text-white hover:bg-ide-focus/90 disabled:opacity-50 transition-opacity"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Initialize Repository
                 </button>
                 <button
                   type="button"
+                  onClick={() => setIsGitHubModalOpen(true)}
+                  className="ide-focus-ring mt-2 flex w-full max-w-[200px] items-center justify-center gap-1.5 rounded-ide-control border border-ide-border-strong bg-ide-surface px-3 py-1.5 text-xs font-medium text-ide-text hover:bg-ide-hover"
+                >
+                  <UploadCloud className="h-3.5 w-3.5 text-ide-cyan" />
+                  {githubUser ? 'Publish / Clone GitHub' : 'Sign in with GitHub'}
+                </button>
+                <button
+                  type="button"
                   onClick={() => {
-                    const p = window.prompt('Enter path to open a Git repository (e.g. C:\\Users\\ASUS\\Downloads\\Anas\\vs code\\INTERNSHIP\\HRFlow):', workspacePath || '');
+                    const p = window.prompt('Enter local folder path to open a Git repository:', workspacePath || '');
                     if (p) openWorkspaceByPath(p);
                   }}
                   className="mt-3 text-[10px] text-ide-focus hover:underline font-sans"
@@ -971,14 +1089,28 @@ export const Sidebar: React.FC = () => {
                     placeholder="Commit message (Ctrl+Enter to commit)"
                     className="ide-focus-ring w-full resize-none rounded-ide-control border border-ide-border-strong bg-ide-code p-1.5 font-mono text-[11px] text-ide-strong outline-none placeholder:text-ide-subtle"
                   />
-                  <button
-                    type="submit"
-                    disabled={!commitMessage.trim() || effectiveStaged.length === 0 || gitLoading}
-                    className="ide-focus-ring mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-ide-control bg-ide-focus py-1 text-xs font-semibold text-white hover:bg-ide-focus/90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                    Commit ({effectiveStaged.length} staged)
-                  </button>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <button
+                      type="submit"
+                      disabled={!commitMessage.trim() || effectiveStaged.length === 0 || gitLoading}
+                      className="ide-focus-ring flex flex-1 items-center justify-center gap-1 rounded-ide-control bg-ide-focus py-1 text-[11px] font-semibold text-white hover:bg-ide-focus/90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+                    >
+                      <Check className="h-3 w-3" />
+                      Commit ({effectiveStaged.length})
+                    </button>
+                    {isGitRepo && (
+                      <button
+                        type="button"
+                        onClick={handleCommitAndPush}
+                        disabled={!commitMessage.trim() || (effectiveStaged.length === 0 && effectiveUnstaged.length === 0) || gitLoading}
+                        className="ide-focus-ring flex items-center justify-center gap-1 rounded-ide-control border border-ide-border-strong bg-ide-surface px-2 py-1 text-[11px] font-medium text-ide-cyan hover:bg-ide-hover disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Commit and Push directly to GitHub"
+                      >
+                        <ArrowUpFromLine className="h-3 w-3" />
+                        Push
+                      </button>
+                    )}
+                  </div>
                   {commitSuccessMessage && (
                     <div className="mt-1 text-[10px] text-ide-emerald font-mono text-center">
                       {commitSuccessMessage}
@@ -1330,23 +1462,40 @@ export const Sidebar: React.FC = () => {
                 </div>
               </div>
 
-              {/* External Services (Honest Status) */}
-              <div className="border-t border-ide-border pt-3">
-                <h3 className="font-semibold text-ide-strong text-[11px] uppercase tracking-wider mb-2">
-                  External Integrations
+              {/* External Integrations (GitHub & AI Keys) */}
+              <div className="border-t border-ide-border pt-3 space-y-2.5">
+                <h3 className="font-semibold text-ide-strong text-[11px] uppercase tracking-wider">
+                  Integrations &amp; API Keys
                 </h3>
-                <p className="text-[11px] text-ide-subtle leading-relaxed mb-2">
-                  Remote GitHub and database services are unconfigured. IntelliCode operates safely in self-contained local workspace mode.
-                </p>
-                <div className="space-y-1 font-mono text-[10px]">
+                <div className="space-y-1.5 font-mono text-[10px]">
                   <div className="flex justify-between text-ide-muted">
-                    <span>GitHub Remote:</span>
-                    <span className="text-ide-amber">Offline / Local</span>
+                    <span>GitHub Account:</span>
+                    <span className={githubUser ? 'text-ide-emerald' : 'text-ide-amber'}>
+                      {githubUser ? `@${githubUser.login}` : 'Not Connected'}
+                    </span>
                   </div>
                   <div className="flex justify-between text-ide-muted">
-                    <span>Database Tunnel:</span>
-                    <span className="text-ide-subtle">Disconnected</span>
+                    <span>Configured AI Keys:</span>
+                    <span className="text-ide-cyan">{Object.keys(apiKeys).length} provider(s)</span>
                   </div>
+                </div>
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsGitHubModalOpen(true)}
+                    className="ide-focus-ring flex w-full items-center justify-center gap-1.5 rounded-ide-control border border-ide-border-strong bg-ide-surface py-1.5 text-[11px] font-medium text-ide-text hover:bg-ide-hover"
+                  >
+                    <Github className="h-3.5 w-3.5" />
+                    <span>{githubUser ? 'Manage GitHub Repos' : 'Sign in with GitHub'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsModelSwitchingModalOpen(true)}
+                    className="ide-focus-ring flex w-full items-center justify-center gap-1.5 rounded-ide-control border border-ide-border-strong bg-ide-surface py-1.5 text-[11px] font-medium text-ide-text hover:bg-ide-hover"
+                  >
+                    <KeyRound className="h-3.5 w-3.5 text-ide-cyan" />
+                    <span>AI Models &amp; API Keys</span>
+                  </button>
                 </div>
               </div>
             </div>

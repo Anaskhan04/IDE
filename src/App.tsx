@@ -13,9 +13,11 @@ import { ValidationRunner } from './components/validation/ValidationRunner';
 import { ModelGatewayChat } from './components/model-gateway/ModelGatewayChat';
 import { ModelSwitcherModal } from './components/model-gateway/ModelSwitcherModal';
 import { ProblemsPanel } from './components/problems/ProblemsPanel';
+import { TerminalPanel } from './components/terminal/TerminalPanel';
+import { GitHubAuthModal } from './components/github/GitHubAuthModal';
 
 export const AppContent: React.FC = () => {
-  const { activeView, isCopilotOpen, isProblemsPanelOpen } = useIDE();
+  const { activeView, isCopilotOpen, isProblemsPanelOpen, isTerminalOpen } = useIDE();
 
   return (
     <div className="flex h-screen w-screen select-none flex-col overflow-hidden bg-ide-bg font-sans text-[13px] text-ide-text antialiased">
@@ -36,6 +38,7 @@ export const AppContent: React.FC = () => {
             {!['editor', 'cia', 'mcp', 'graph', 'validation'].includes(activeView) && <CodeEditor />}
           </div>
           {isProblemsPanelOpen && <ProblemsPanel />}
+          {isTerminalOpen && <TerminalPanel />}
         </main>
 
         {isCopilotOpen && <ModelGatewayChat />}
@@ -43,6 +46,7 @@ export const AppContent: React.FC = () => {
 
       <StatusBar />
       <ModelSwitcherModal />
+      <GitHubAuthModal />
     </div>
   );
 };

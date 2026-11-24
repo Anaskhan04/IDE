@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, GitBranch, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, GitBranch, Github, RefreshCw, Terminal, XCircle } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 
 export const StatusBar: React.FC = () => {
@@ -18,6 +18,12 @@ export const StatusBar: React.FC = () => {
     diagnosticsSummary,
     toggleProblemsPanel,
     isProblemsPanelOpen,
+    toggleTerminal,
+    isTerminalOpen,
+    githubUser,
+    setIsGitHubModalOpen,
+    pushToGitHub,
+    gitLoading,
   } = useIDE();
   const activeFile = files.find((file) => file.id === activeFileId);
 
@@ -43,7 +49,6 @@ export const StatusBar: React.FC = () => {
 
   const connectedMcpCount = mcpServers.filter((server) => server.status === 'connected').length;
   const totalMcpCount = mcpServers.length;
-  const cacheLabel = masterPrompt.cacheHitRatio || 'Unknown';
 
   return (
     <footer
@@ -70,14 +75,32 @@ export const StatusBar: React.FC = () => {
         <button
           type="button"
           onClick={() => {
-            setSidebarView('git');
-            setIsSidebarVisible(true);
+            if (isGitRepo) {
+              pushToGitHub();
+            } else {
+              setSidebarView('git');
+              setIsSidebarVisible(true);
+            }
           }}
-          className="flex items-center gap-1.5 whitespace-nowrap text-ide-subtle hover:text-ide-text"
-          title="Local repository synced with workspace storage"
+          disabled={gitLoading}
+          className="flex items-center gap-1.5 whitespace-nowrap text-ide-subtle hover:text-ide-text disabled:opacity-50"
+          title={isGitRepo ? 'Push / Sync changes with GitHub' : 'Open Source Control'}
         >
-          <RefreshCw className="h-3 w-3" aria-hidden="true" />
-          <span>Sync</span>
+          <RefreshCw className={`h-3 w-3 ${gitLoading ? 'animate-spin text-ide-focus' : ''}`} aria-hidden="true" />
+          <span>{isGitRepo ? 'Push' : 'Sync'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={toggleTerminal}
+          className={`ide-focus-ring hidden items-center gap-1 whitespace-nowrap rounded-ide-control px-1.5 py-0.5 sm:flex transition-colors ${
+            isTerminalOpen
+              ? 'bg-ide-hover/80 text-ide-cyan'
+              : 'text-ide-muted hover:bg-ide-hover/50 hover:text-ide-text'
+          }`}
+          title="Toggle Integrated Terminal (Ctrl+`)"
+        >
+          <Terminal className="h-3 w-3" aria-hidden="true" />
+          <span>Terminal</span>
         </button>
         <button
           type="button"
@@ -106,8 +129,16 @@ export const StatusBar: React.FC = () => {
       </div>
 
       <div className="flex shrink-0 items-center gap-3 whitespace-nowrap">
-        <span>MCP: {connectedMcpCount}/{totalMcpCount} Connected</span>
-        <span className="hidden text-ide-cyan sm:inline">Cache: {cacheLabel}</span>
+        <button
+          type="button"
+          onClick={() => setIsGitHubModalOpen(true)}
+          className="ide-focus-ring flex items-center gap-1.5 rounded-ide-control px-1.5 py-0.5 text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+          title={githubUser ? `GitHub connected as @${githubUser.login}` : 'Sign in with GitHub'}
+        >
+          <Github className={`h-3 w-3 ${githubUser ? 'text-ide-emerald' : 'text-ide-subtle'}`} aria-hidden="true" />
+          <span>{githubUser ? `@${githubUser.login}` : 'GitHub: Sign in'}</span>
+        </button>
+        <span>MCP: {connectedMcpCount}/{totalMcpCount}</span>
         <span className="text-ide-focus">{shortLanguage}</span>
         <span className="hidden md:inline">UTF-8</span>
         <span className="hidden md:inline">LF</span>
