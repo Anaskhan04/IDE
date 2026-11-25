@@ -29,7 +29,8 @@ export const TerminalPanel: React.FC = () => {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const activeFile = files.find((f) => f.id === activeFileId);
-  const displayCwd = terminalCwd || workspacePath || repoRoot || 'workspace';
+  const displayCwd = terminalCwd || workspacePath || repoRoot || 'workspace (host default)';
+  const latestShell = [...terminalHistory].reverse().find((e) => e.shell)?.shell;
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -137,6 +138,11 @@ export const TerminalPanel: React.FC = () => {
         <div className="flex items-center gap-2.5 min-w-0">
           <TerminalIcon className="h-3.5 w-3.5 text-ide-cyan shrink-0" aria-hidden="true" />
           <span className="font-semibold uppercase tracking-wide text-ide-strong">Terminal</span>
+          {latestShell && (
+            <span className="rounded-ide-control border border-ide-border bg-ide-surface px-1.5 py-0.5 font-mono text-[9px] text-ide-muted">
+              {latestShell}
+            </span>
+          )}
           <span className="truncate font-mono text-[10px] text-ide-subtle" title={displayCwd}>
             {displayCwd}
           </span>
@@ -209,10 +215,18 @@ export const TerminalPanel: React.FC = () => {
             {entry.command && (
               <div className="flex items-center gap-2 text-ide-strong">
                 <span className="text-ide-cyan">❯</span>
-                <span className="text-ide-subtle text-[10px]">{entry.cwd ? entry.cwd.split('/').pop() : 'workspace'}</span>
+                <span className="text-ide-subtle text-[10px]" title={entry.cwd}>
+                  {entry.cwd ? entry.cwd.replace(/\\/g, '/').split('/').pop() || entry.cwd : 'workspace'}
+                </span>
                 <span>{entry.command}</span>
-                {entry.exitCode !== undefined && entry.exitCode !== 0 && (
-                  <span className="ml-auto text-[10px] text-ide-rose">exit {entry.exitCode}</span>
+                {entry.exitCode !== undefined && (
+                  <span
+                    className={`ml-auto text-[10px] ${
+                      entry.exitCode === 0 ? 'text-ide-emerald' : 'text-ide-rose'
+                    }`}
+                  >
+                    exit {entry.exitCode}
+                  </span>
                 )}
               </div>
             )}

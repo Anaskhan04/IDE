@@ -556,6 +556,9 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     directoryHandleRef.current = null;
     setPendingReconnect(null);
     setSaveError(null);
+    setWorkspacePath(null);
+    setRepoRoot(null);
+    setTerminalCwd('');
     clearStoredDirectoryHandle();
     saveWorkspaceMeta({
       projectId: id,
@@ -1072,6 +1075,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }).then(async (resolved) => {
       if (resolved.success && resolved.workspacePath) {
         setWorkspacePath(resolved.workspacePath);
+        setTerminalCwd(resolved.workspacePath);
         setIsGitRepo(resolved.isGit);
 
         // Update workspace metadata with exact resolved path and repo root
@@ -1100,6 +1104,8 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
       } else {
         // Directory could not be located on host or is not a git repo
+        setWorkspacePath(null);
+        setTerminalCwd('');
         setIsGitRepo(false);
         setRepoRoot(null);
         setGitBranch('');
@@ -1481,6 +1487,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 if (isCancelled) return;
                 if (resolved.success && resolved.workspacePath) {
                   setWorkspacePath(resolved.workspacePath);
+                  setTerminalCwd(resolved.workspacePath);
                   setIsGitRepo(resolved.isGit);
                   if (resolved.isGit && resolved.repoRoot) {
                     setRepoRoot(resolved.repoRoot);
@@ -1493,10 +1500,15 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     setGitCommits([]);
                   }
                 } else {
+                  setWorkspacePath(null);
+                  setTerminalCwd('');
                   setIsGitRepo(false);
                   setRepoRoot(null);
                   setGitBranch('');
                   setGitCommits([]);
+                  if (meta?.workspacePath) {
+                    saveWorkspaceMeta({ ...meta, workspacePath: undefined, repoRoot: undefined });
+                  }
                 }
               }).catch(() => {
                 if (!isCancelled) {
@@ -1823,19 +1835,25 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const runTerminalCommand = async (command: string): Promise<void> => {
-    const activeCwd = terminalCwd || workspacePath || repoRoot || '';
+    const activeRoot = workspacePath || repoRoot || '';
+    const activeCwd = terminalCwd || activeRoot;
     setIsRunningCommand(true);
-    const res = await gitService.execTerminal(command, activeCwd || undefined);
-    setTerminalCwd(res.cwd || activeCwd);
+    const res = await gitService.execTerminal(command, activeCwd || undefined, activeRoot || undefined);
+    const nextCwd = res.cwd || activeCwd;
+    if (nextCwd) {
+      setTerminalCwd(nextCwd);
+    }
+    const errOutput = res.stderr || res.error || '';
     setTerminalHistory(prev => [
       ...prev,
       {
         id: 'term-' + Date.now(),
         command,
-        cwd: res.cwd || activeCwd,
+        cwd: nextCwd,
         stdout: res.stdout || '',
-        stderr: res.stderr || '',
-        exitCode: res.exitCode,
+        stderr: errOutput,
+        exitCode: res.exitCode ?? (res.success ? 0 : 1),
+        shell: res.shell,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       },
     ]);

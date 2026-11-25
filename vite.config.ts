@@ -6,10 +6,12 @@ import { gitApiPlugin } from './vite-plugin-git.js';
 export default defineConfig({
   plugins: [react(), gitApiPlugin()],
   server: {
+    host: '127.0.0.1',
     port: 3000,
     open: false,
   },
   preview: {
+    host: '127.0.0.1',
     port: 3000,
   },
 });

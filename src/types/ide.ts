@@ -255,6 +255,7 @@ export interface TerminalEntry {
   stdout: string;
   stderr: string;
   exitCode?: number;
+  shell?: string;
   timestamp: string;
 }
 

@@ -281,15 +281,18 @@ export const gitService = {
     }
   },
 
-  async execTerminal(command: string, cwd?: string): Promise<{
+  async execTerminal(command: string, cwd?: string, workspaceRoot?: string): Promise<{
     success: boolean;
     stdout: string;
     stderr: string;
     exitCode: number;
     cwd: string;
+    shell?: string;
+    warning?: string | null;
+    error?: string;
   }> {
     try {
-      return await postApi('/api/terminal/exec', { command, cwd });
+      return await postApi('/api/terminal/exec', { command, cwd, workspaceRoot });
     } catch (err: any) {
       return {
         success: false,

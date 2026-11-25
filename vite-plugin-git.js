@@ -1,7 +1,8 @@
-import { exec, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { executeTerminalCommand, isAuthorizedLocalRequest } from './vite-terminal-utils.js';
 
 /**
  * Execute a git command safely with explicit argument arrays (preventing shell injection).
@@ -30,37 +31,6 @@ function runGit(args, cwd, token) {
           stdout: stdout ? stdout.toString() : '',
           stderr: stderr ? stderr.toString() : '',
           code: err ? (err.code || 1) : 0,
-        });
-      }
-    );
-  });
-}
-
-/**
- * Execute a shell command inside a workspace directory for the integrated terminal.
- */
-function runShellCommand(command, cwd) {
-  return new Promise((resolve) => {
-    exec(
-      command,
-      {
-        cwd,
-        timeout: 30000,
-        maxBuffer: 5 * 1024 * 1024,
-        env: {
-          ...process.env,
-          FORCE_COLOR: '0',
-        },
-      },
-      (err, stdout, stderr) => {
-        let exitCode = 0;
-        if (err) {
-          exitCode = typeof err.code === 'number' ? err.code : 1;
-        }
-        resolve({
-          stdout: stdout ? stdout.toString() : '',
-          stderr: stderr ? stderr.toString() : (err && !stdout ? err.message : ''),
-          exitCode,
         });
       }
     );
@@ -274,6 +244,10 @@ export function gitApiPlugin() {
       }
 
       try {
+        if (!isAuthorizedLocalRequest(req)) {
+          return sendJson(res, 403, { success: false, error: 'Forbidden: local API access restricted to localhost' });
+        }
+
         if (req.method !== 'POST') {
           return sendJson(res, 405, { error: 'Method not allowed' });
         }
@@ -827,51 +801,12 @@ export function gitApiPlugin() {
         // ============================================================
 
         if (url === '/api/terminal/exec') {
-          const command = (body.command || '').trim();
-          const resolvedCwd = body.cwd && fs.existsSync(body.cwd) ? path.resolve(body.cwd) : process.cwd();
-
-          if (!command) {
-            return sendJson(res, 200, {
-              success: true,
-              stdout: '',
-              stderr: '',
-              exitCode: 0,
-              cwd: resolvedCwd.replace(/\\/g, '/'),
-            });
-          }
-
-          const cdMatch = command.match(/^cd(?:\s+(.*))?$/i);
-          if (cdMatch) {
-            const target = (cdMatch[1] || '').trim().replace(/^["']|["']$/g, '');
-            const nextDir = !target || target === '~'
-              ? os.homedir()
-              : path.resolve(resolvedCwd, target);
-            if (fs.existsSync(nextDir) && fs.statSync(nextDir).isDirectory()) {
-              return sendJson(res, 200, {
-                success: true,
-                stdout: '',
-                stderr: '',
-                exitCode: 0,
-                cwd: nextDir.replace(/\\/g, '/'),
-              });
-            }
-            return sendJson(res, 200, {
-              success: false,
-              stdout: '',
-              stderr: `cd: no such directory: ${target}`,
-              exitCode: 1,
-              cwd: resolvedCwd.replace(/\\/g, '/'),
-            });
-          }
-
-          const result = await runShellCommand(command, resolvedCwd);
-          return sendJson(res, 200, {
-            success: result.exitCode === 0,
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: result.exitCode,
-            cwd: resolvedCwd.replace(/\\/g, '/'),
+          const result = await executeTerminalCommand(body.command, {
+            requestedCwd: body.cwd,
+            workspaceRoot: body.workspaceRoot,
+            fallbackCwd: process.cwd(),
           });
+          return sendJson(res, 200, result);
         }
 
         // ============================================================

@@ -124,7 +124,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       category: 'File',
       action: () => {
         const input = window.prompt(
-          'Enter local folder path (e.g. C:\\Users\\ASUS\\Downloads\\Anas\\vs code\\INTERNSHIP\\HRFlow):',
+          'Enter local folder path (e.g. /path/to/project or C:\\Projects\\my-app):',
           workspacePath || ''
         );
         if (input) {
