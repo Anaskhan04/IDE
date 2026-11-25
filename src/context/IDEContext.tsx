@@ -43,6 +43,11 @@ import { INITIAL_TEST_SUITES } from '../data/mockTests';
 import { EVALUATION_EXPERIMENTS } from '../data/mockBenchmarks';
 import { INITIAL_MASTER_PROMPT, MasterPromptData } from '../data/mockMasterPrompt';
 import { buildGraphFromFiles } from '../utils/astParser';
+import {
+  analyzeChangeImpact,
+  executeGraphQuery,
+  traceSymbolCallPath,
+} from '../utils/graphIntelligence';
 import { 
   analyzeWorkspaceDiagnostics, 
   getDiagnosticsSummary, 
@@ -650,10 +655,24 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isModified: f.isModified || isDirty
       };
     }));
-    if (fileId === 'payment-service' || fileId === 'auth-service' || fileId === 'cbm-cypher') {
-      runChangeImpactAnalysis(fileId);
-    }
   };
+
+  // Debounced live AST Knowledge Graph refresh when workspace files change
+  useEffect(() => {
+    if (files.length === 0) return;
+    const timer = setTimeout(() => {
+      try {
+        const { nodes, edges } = buildGraphFromFiles(files);
+        if (nodes.length > 0) {
+          setGraphNodes(nodes);
+          setGraphEdges(edges);
+        }
+      } catch (err) {
+        console.warn('Debounced AST graph update failed:', err);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [files]);
 
   const applyUpdatedAst = (updatedList: ProjectFile[]) => {
     try {
@@ -1643,35 +1662,26 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const runChangeImpactAnalysis = (targetId: string) => {
-    if (targetId === 'cbm-cypher') {
-      setCiaResult(CBM_CIA_RESULT);
-      setGraphNodes(prev => prev.map(node => {
-        if (node.id === 'cbm-node-cypher-c' || node.id === 'cbm-node-sym-cypher_exec') {
-          return { ...node, impactStatus: 'modified' };
-        }
-        if (['cbm-node-mcp-c', 'cbm-node-cli-c', 'cbm-node-store-c'].includes(node.id)) {
-          return { ...node, impactStatus: 'direct' };
-        }
-        if (['cbm-node-test-cypher', 'cbm-node-test-mcp'].includes(node.id)) {
-          return { ...node, impactStatus: 'indirect' };
-        }
-        return { ...node, impactStatus: 'none' };
-      }));
-    } else if (targetId === 'payment-service') {
-      setCiaResult(DEFAULT_CIA_RESULT);
-      setGraphNodes(prev => prev.map(node => {
-        if (node.id === 'node-payment-service' || node.id === 'node-sym-processPayment') {
-          return { ...node, impactStatus: 'modified' };
-        }
-        if (['node-checkout-page', 'node-cart-store', 'node-order-service'].includes(node.id)) {
-          return { ...node, impactStatus: 'direct' };
-        }
-        if (['node-payment-test', 'node-checkout-e2e'].includes(node.id)) {
-          return { ...node, impactStatus: 'indirect' };
-        }
-        return { ...node, impactStatus: 'none' };
-      }));
-    }
+    const { result, impactedStatusByNodeId } = analyzeChangeImpact(
+      targetId,
+      files,
+      graphNodes,
+      graphEdges
+    );
+    setCiaResult(result);
+    setGraphNodes(prev =>
+      prev.map(node => ({
+        ...node,
+        impactStatus: impactedStatusByNodeId.get(node.id) || 'none',
+      }))
+    );
+    setGraphEdges(prev =>
+      prev.map(edge => ({
+        ...edge,
+        isImpactPath:
+          impactedStatusByNodeId.has(edge.source) || impactedStatusByNodeId.has(edge.target),
+      }))
+    );
   };
 
   const toggleMcpTool = (serverId: string, toolName: string) => {
@@ -1743,56 +1753,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const executeCypherQuery = async (query: string): Promise<CypherQueryResult> => {
     setIsExecutingCypher(true);
-    await new Promise(r => setTimeout(r, 260));
-
-    let result: CypherQueryResult;
-    if (query.includes('cbm_cypher_execute')) {
-      result = {
-        query,
-        executionTimeMs: 0.68,
-        columns: ['caller', 'type', 'file', 'call_site'],
-        rows: [
-          { caller: 'mcp.c', type: 'File / MCP Handler', file: 'src/mcp/mcp.c', call_site: 'cbm_mcp_dispatch() line 38' },
-          { caller: 'cli.c', type: 'File / CLI Runner', file: 'src/cli/cli.c', call_site: 'cbm_cli_execute_tool() line 52' },
-          { caller: 'test_cypher.c', type: 'Test Suite', file: 'tests/test_cypher.c', call_site: 'test_match_pattern() line 120' }
-        ]
-      };
-    } else if (query.includes('MCP Protocol Server') || query.includes('mcp')) {
-      result = {
-        query,
-        executionTimeMs: 0.52,
-        columns: ['function', 'returnType', 'loc', 'file'],
-        rows: [
-          { function: 'cbm_mcp_dispatch()', returnType: 'int', loc: 68, file: 'src/mcp/mcp.c' },
-          { function: 'cbm_handle_query_cypher()', returnType: 'void', loc: 42, file: 'src/mcp/mcp.c' },
-          { function: 'cbm_handle_trace_path()', returnType: 'void', loc: 56, file: 'src/mcp/mcp.c' }
-        ]
-      };
-    } else if (query.includes('main.c')) {
-      result = {
-        query,
-        executionTimeMs: 0.49,
-        columns: ['entry_point', 'dispatches_to', 'module'],
-        rows: [
-          { entry_point: 'main() in main.c', dispatches_to: 'cbm_mcp_dispatch()', module: 'src/mcp/mcp.c' },
-          { entry_point: 'main() in main.c', dispatches_to: 'cbm_daemon_start()', module: 'src/daemon/daemon.c' },
-          { entry_point: 'main() in main.c', dispatches_to: 'cbm_cli_execute_tool()', module: 'src/cli/cli.c' }
-        ]
-      };
-    } else {
-      result = {
-        query,
-        executionTimeMs: 0.88,
-        columns: ['symbol', 'cluster', 'kind', 'degree'],
-        rows: [
-          { symbol: 'cbm_cypher_execute()', cluster: 'Cypher Query Engine', kind: 'Function', degree: 6 },
-          { symbol: 'mcp.c', cluster: 'MCP Protocol Server', kind: 'File', degree: 7 },
-          { symbol: 'main.c', cluster: 'Entry & CLI', kind: 'File', degree: 5 },
-          { symbol: 'store.c', cluster: 'In-Memory SQLite Store', kind: 'File', degree: 6 }
-        ]
-      };
-    }
-
+    const result = executeGraphQuery(query, graphNodes, graphEdges);
     setCypherResult(result);
     setIsExecutingCypher(false);
     return result;
@@ -1800,35 +1761,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const traceCallPath = async (symbolName: string, direction: 'inbound' | 'outbound', depth: number): Promise<TracePathResult> => {
     setIsTracingPath(true);
-    await new Promise(r => setTimeout(r, 220));
-
-    const isCbm = currentProjectId === 'codebase-memory-mcp';
-
-    const result: TracePathResult = {
-      symbol: symbolName,
-      direction,
-      depth,
-      executionTimeMs: 0.52,
-      paths: isCbm ? (
-        direction === 'inbound' ? [
-          { source: 'mcp.c (cbm_mcp_dispatch)', target: symbolName, edge: 'CALLS', file: 'src/mcp/mcp.c', line: 38 },
-          { source: 'cli.c (cbm_cli_execute_tool)', target: symbolName, edge: 'CALLS', file: 'src/cli/cli.c', line: 52 },
-          { source: 'test_cypher.c (test_match_pattern)', target: symbolName, edge: 'TESTS', file: 'tests/test_cypher.c', line: 120 }
-        ] : [
-          { source: symbolName, target: 'cbm_cypher_parse()', edge: 'CALLS', file: 'src/cypher/cypher.c', line: 95 },
-          { source: symbolName, target: 'cbm_store_execute_pattern()', edge: 'CALLS', file: 'src/store/store.c', line: 42 },
-          { source: symbolName, target: 'cbm_query_free()', edge: 'CALLS', file: 'src/cypher/cypher.c', line: 140 }
-        ]
-      ) : (
-        direction === 'inbound' ? [
-          { source: 'CheckoutPage.tsx', target: symbolName, edge: 'CALLS', file: 'src/components/CheckoutPage.tsx', line: 16 },
-          { source: 'orderService.ts', target: symbolName, edge: 'CALLS', file: 'src/services/orderService.ts', line: 8 }
-        ] : [
-          { source: symbolName, target: 'validateCard()', edge: 'CALLS', file: 'src/services/paymentService.ts', line: 20 }
-        ]
-      )
-    };
-
+    const result = traceSymbolCallPath(symbolName, direction, depth, files, graphNodes, graphEdges);
     setTraceResult(result);
     setIsTracingPath(false);
     return result;

@@ -18,18 +18,21 @@ export const CIASimulator: React.FC = () => {
     runTests,
     isExecutingTests,
     files,
+    activeFileId,
   } = useIDE();
 
-  const [selectedScenario, setSelectedScenario] = useState<'payment' | 'auth'>('payment');
+  const [selectedTargetId, setSelectedTargetId] = useState<string>(
+    () => activeFileId || files.find((f) => f.isModified)?.id || files[0]?.id || ''
+  );
   const [hasRunAnalysis, setHasRunAnalysis] = useState(false);
-  const hasModifiedTarget = files.some((file) => file.isModified && file.id === ciaResult.targetId);
-  const hasAnalysis = hasRunAnalysis || hasModifiedTarget;
+  const hasModifiedTarget = files.some((file) => file.isModified);
+  const hasAnalysis = hasRunAnalysis || hasModifiedTarget || Boolean(ciaResult.targetPath);
   const tone = severityTone[ciaResult.severity] || severityTone.low;
 
-  const handleSwitchScenario = (scenario: 'payment' | 'auth') => {
-    setSelectedScenario(scenario);
+  const handleAnalyzeTarget = (targetId: string) => {
+    setSelectedTargetId(targetId);
     setHasRunAnalysis(true);
-    runChangeImpactAnalysis(scenario === 'payment' ? 'payment-service' : 'auth-service');
+    runChangeImpactAnalysis(targetId);
   };
 
   return (
@@ -43,19 +46,28 @@ export const CIASimulator: React.FC = () => {
             </div>
             <p className="mt-2 max-w-2xl text-xs leading-relaxed text-ide-muted">Review what this change reaches before running the affected tests.</p>
           </div>
-          <div className="flex items-center gap-1 border border-ide-border-strong bg-ide-panel p-1 font-mono text-[10px]">
-            <span className="px-2 text-ide-subtle">Target</span>
-            {(['payment', 'auth'] as const).map((scenario) => (
-              <button
-                key={scenario}
-                type="button"
-                onClick={() => handleSwitchScenario(scenario)}
-                className={`ide-focus-ring px-2.5 py-1 ${selectedScenario === scenario ? 'bg-ide-selected text-ide-text' : 'text-ide-muted hover:bg-ide-hover hover:text-ide-text'}`}
-                aria-pressed={selectedScenario === scenario}
-              >
-                {scenario === 'payment' ? 'paymentService.ts' : 'authService.ts'}
-              </button>
-            ))}
+          <div className="flex items-center gap-2 border border-ide-border-strong bg-ide-panel p-1 font-mono text-[10px] rounded-ide-control">
+            <label htmlFor="cia-target-select" className="px-2 text-ide-subtle">Target</label>
+            <select
+              id="cia-target-select"
+              value={selectedTargetId}
+              onChange={(e) => handleAnalyzeTarget(e.target.value)}
+              className="ide-focus-ring max-w-[260px] bg-ide-code px-2 py-1 text-ide-text outline-none rounded-ide-control"
+            >
+              {files.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.path}{f.isModified ? ' (modified)' : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => handleAnalyzeTarget(selectedTargetId || activeFileId || files[0]?.id || '')}
+              disabled={files.length === 0}
+              className="ide-focus-ring bg-ide-focus px-2.5 py-1 font-semibold text-white hover:bg-ide-focus/90 disabled:opacity-40 rounded-ide-control"
+            >
+              Analyze
+            </button>
           </div>
         </header>
 
@@ -111,8 +123,8 @@ export const CIASimulator: React.FC = () => {
               </div>
               <span className="text-ide-text">{ciaResult.targetName}</span>
               <span className="text-ide-subtle">{ciaResult.targetPath}</span>
-              <span className="md:ml-auto">Scenario: <span className="text-ide-text">{selectedScenario === 'payment' ? 'paymentService.ts' : 'authService.ts'}</span></span>
-              <button type="button" onClick={() => { openFile(selectedScenario === 'payment' ? 'payment-service' : 'auth-service'); setActiveView('editor'); }} className="ide-focus-ring inline-flex items-center gap-1 text-ide-focus hover:text-ide-text">
+              <span className="md:ml-auto">Target File: <span className="text-ide-text">{ciaResult.targetName}</span></span>
+              <button type="button" onClick={() => { openFile(ciaResult.targetId); setActiveView('editor'); }} className="ide-focus-ring inline-flex items-center gap-1 text-ide-focus hover:text-ide-text">
                 View source <ChevronRight className="h-3 w-3" />
               </button>
             </div>

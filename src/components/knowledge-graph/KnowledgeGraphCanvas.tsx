@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 import type { GraphNode, ProjectFile, SymbolInfo } from '../../types/ide';
-import { SAMPLE_CYPHER_QUERIES } from '../../data/mockGraph';
+import { GRAPH_QUERY_TEMPLATES } from '../../utils/graphIntelligence';
 import { detectArchitectureArea, isGeneratedOrMigrationPath } from '../../utils/astParser';
 
 type GraphTab = 'canvas' | 'cypher' | 'trace' | 'clusters';
@@ -102,7 +102,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
   const [hideGenerated, setHideGenerated] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [impactModeOnly, setImpactModeOnly] = useState(false);
-  const [activeCypherText, setActiveCypherText] = useState(SAMPLE_CYPHER_QUERIES[0].query);
+  const [activeCypherText, setActiveCypherText] = useState(GRAPH_QUERY_TEMPLATES[0].query);
   const [traceSymbol, setTraceSymbol] = useState('processPayment');
   const [traceDirection, setTraceDirection] = useState<'inbound' | 'outbound'>('inbound');
   const [traceDepth, setTraceDepth] = useState(3);
@@ -1117,9 +1117,11 @@ export const KnowledgeGraphCanvas: React.FC = () => {
           <div>
             <h2 className="flex items-center gap-2 text-base font-semibold text-ide-strong">
               <Terminal className="h-4 w-4 text-ide-cyan" aria-hidden="true" />
-              Interactive Cypher query console
+              Graph Query Console
             </h2>
-            <p className="mt-2 text-xs text-ide-muted">Execute graph pattern matching queries against the in-memory SQLite store.</p>
+            <p className="mt-2 text-xs text-ide-muted">
+              Query live workspace AST nodes and edges (supports <code className="font-mono text-ide-text">MATCH (n[:Type])</code>, <code className="font-mono text-ide-text">MATCH (a)-[r[:TYPE]]-&gt;(b)</code>, <code className="font-mono text-ide-text">WHERE ... CONTAINS</code>, <code className="font-mono text-ide-text">LIMIT</code>, or keyword search; write clauses not supported).
+            </p>
           </div>
           {cypherResult && (
             <div className="flex items-center gap-2 font-mono text-[10px] text-ide-emerald" aria-live="polite">
@@ -1131,7 +1133,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-2 font-mono text-[10px]">
           <span className="text-ide-subtle">Templates:</span>
-          {SAMPLE_CYPHER_QUERIES.map((query) => (
+          {GRAPH_QUERY_TEMPLATES.map((query) => (
             <button
               key={query.name}
               type="button"
@@ -1291,6 +1293,11 @@ export const KnowledgeGraphCanvas: React.FC = () => {
               <h3 className="font-mono text-[10px] uppercase tracking-[0.1em] text-ide-muted">{traceResult.direction} path from {traceResult.symbol}</h3>
               <span className="font-mono text-[10px] text-ide-subtle">{traceResult.paths.length} records</span>
             </div>
+            {traceResult.paths.length === 0 ? (
+              <div className="border-l-2 border-ide-border-strong bg-ide-panel px-4 py-4 font-mono text-[11px] text-ide-muted">
+                No {traceResult.direction} call or import paths found for &ldquo;{traceResult.symbol}&rdquo; in the current workspace graph.
+              </div>
+            ) : (
             <ol className="divide-y divide-ide-border border-y border-ide-border">
               {traceResult.paths.map((path, index) => (
                 <li key={`${path.file}-${path.line}-${index}`} className="flex flex-col gap-3 py-3 md:flex-row md:items-center md:justify-between">
@@ -1317,6 +1324,7 @@ export const KnowledgeGraphCanvas: React.FC = () => {
                 </li>
               ))}
             </ol>
+            )}
           </section>
         ) : (
           <div className="border-l-2 border-ide-border-strong px-4 py-4 font-mono text-[10px] text-ide-subtle">
@@ -1408,9 +1416,8 @@ export const KnowledgeGraphCanvas: React.FC = () => {
         <div className="flex min-h-[42px] flex-wrap items-center justify-between gap-3 px-4">
           <div className="flex min-w-0 items-center gap-2 font-mono text-[10px]">
             <span className="h-1.5 w-1.5 bg-ide-emerald" aria-hidden="true" />
-            <span className="text-ide-cyan font-semibold">codebase-memory-mcp</span>
-            <span className="text-ide-subtle">(DeusData Engine)</span>
-            <span className="hidden text-ide-muted md:inline">Tree-Sitter AST v0.24 · In-Memory SQLite</span>
+            <span className="text-ide-cyan font-semibold">IntelliCode AST Engine</span>
+            <span className="hidden text-ide-muted md:inline">TypeScript Compiler API &amp; AST Graph · In-Memory JS</span>
           </div>
           <div className="flex items-center gap-3 font-mono text-[10px] text-ide-subtle">
             <span>Graph intelligence</span>
