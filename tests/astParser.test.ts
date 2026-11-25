@@ -341,13 +341,13 @@ setup();`,
         (e) => e.source === indexNode.id && e.target === styleNode.id && e.type === 'IMPORTS'
       );
       assert.ok(htmlToCssEdge, 'IMPORTS edge from index.html to style.css MUST exist');
-      assert.strictEqual(htmlToCssEdge.label, 'IMPORTS');
+      assert.strictEqual(htmlToCssEdge.label, 'STYLESHEET');
 
       const htmlToJsEdge = edges.find(
         (e) => e.source === indexNode.id && e.target === scriptNode.id && e.type === 'IMPORTS'
       );
       assert.ok(htmlToJsEdge, 'IMPORTS edge from index.html to script.js MUST exist');
-      assert.strictEqual(htmlToJsEdge.label, 'IMPORTS');
+      assert.strictEqual(htmlToJsEdge.label, 'SCRIPT');
 
       // Verify CALLS edge in script.js
       const scriptCallEdge = edges.find(
@@ -359,6 +359,151 @@ setup();`,
       assert.ok((indexNode.connectionsCount ?? 0) >= 2, 'index.html should have at least 2 connections');
       assert.ok((styleNode.connectionsCount ?? 0) >= 1, 'style.css should have at least 1 connection');
       assert.ok((scriptNode.connectionsCount ?? 0) >= 1, 'script.js should have at least 1 connection');
+    });
+
+    it('distinguishes HTML file references (STYLESHEET vs SCRIPT) and JS/TS module IMPORTS', () => {
+      const pageFile: ProjectFile = {
+        id: 'page-1',
+        name: 'dashboard.html',
+        path: 'public/dashboard.html',
+        language: 'html',
+        content: `<!DOCTYPE html>
+<html>
+<head>
+  <link rel="stylesheet" href="./theme.css">
+</head>
+<body>
+  <script src="./runtime.js"></script>
+</body>
+</html>`,
+      };
+
+      const themeCss: ProjectFile = {
+        id: 'css-theme',
+        name: 'theme.css',
+        path: 'public/theme.css',
+        language: 'css',
+        content: ':root { --color: blue; }',
+      };
+
+      const runtimeJs: ProjectFile = {
+        id: 'js-runtime',
+        name: 'runtime.js',
+        path: 'public/runtime.js',
+        language: 'javascript',
+        content: `import { helper } from './helpers.js';
+helper();`,
+      };
+
+      const helperJs: ProjectFile = {
+        id: 'js-helper',
+        name: 'helpers.js',
+        path: 'public/helpers.js',
+        language: 'javascript',
+        content: 'export function helper() {}',
+      };
+
+      const { nodes, edges } = buildGraphFromFiles([pageFile, themeCss, runtimeJs, helperJs]);
+
+      const pageNode = nodes.find((n) => n.id === `node-file-${pageFile.id}`);
+      const themeNode = nodes.find((n) => n.id === `node-file-${themeCss.id}`);
+      const runtimeNode = nodes.find((n) => n.id === `node-file-${runtimeJs.id}`);
+      const helperNode = nodes.find((n) => n.id === `node-file-${helperJs.id}`);
+
+      assert.ok(pageNode && themeNode && runtimeNode && helperNode);
+
+      // 1. HTML <link rel="stylesheet"> -> STYLESHEET edge
+      const stylesheetEdge = edges.find(
+        (e) => e.source === pageNode.id && e.target === themeNode.id
+      );
+      assert.ok(stylesheetEdge, 'Edge from dashboard.html to theme.css should exist');
+      assert.strictEqual(stylesheetEdge.type, 'IMPORTS', 'Underlying edge type must remain IMPORTS');
+      assert.strictEqual(stylesheetEdge.label, 'STYLESHEET', 'HTML stylesheet link must have label STYLESHEET');
+      assert.strictEqual(stylesheetEdge.id, `edge-import-${pageFile.id}-${themeCss.id}`);
+
+      // 2. HTML <script src="..."> -> SCRIPT edge
+      const scriptEdge = edges.find(
+        (e) => e.source === pageNode.id && e.target === runtimeNode.id
+      );
+      assert.ok(scriptEdge, 'Edge from dashboard.html to runtime.js should exist');
+      assert.strictEqual(scriptEdge.type, 'IMPORTS', 'Underlying edge type must remain IMPORTS');
+      assert.strictEqual(scriptEdge.label, 'SCRIPT', 'HTML script tag reference must have label SCRIPT');
+      assert.strictEqual(scriptEdge.id, `edge-import-${pageFile.id}-${runtimeJs.id}`);
+
+      // 3. JavaScript/TypeScript module imports -> IMPORTS edge
+      const moduleImportEdge = edges.find(
+        (e) => e.source === runtimeNode.id && e.target === helperNode.id
+      );
+      assert.ok(moduleImportEdge, 'Edge from runtime.js to helpers.js should exist');
+      assert.strictEqual(moduleImportEdge.type, 'IMPORTS', 'Underlying edge type must remain IMPORTS');
+      assert.strictEqual(moduleImportEdge.label, 'IMPORTS', 'JS module import must have label IMPORTS');
+      assert.strictEqual(moduleImportEdge.id, `edge-import-${runtimeJs.id}-${helperJs.id}`);
+    });
+
+    it('derives labels from source tag and target file rather than filename or order', () => {
+      const appHtml: ProjectFile = {
+        id: 'app-html',
+        name: 'app.htm',
+        path: 'app.htm',
+        language: 'html',
+        content: `<!DOCTYPE html>
+<html>
+<head>
+  <link rel="stylesheet" href="custom-theme.less">
+</head>
+<body>
+  <script src="application-bundle.mjs"></script>
+</body>
+</html>`,
+      };
+
+      const customLess: ProjectFile = {
+        id: 'custom-less',
+        name: 'custom-theme.less',
+        path: 'custom-theme.less',
+        language: 'less',
+        content: '@primary: #4f46e5;',
+      };
+
+      const appBundle: ProjectFile = {
+        id: 'app-bundle',
+        name: 'application-bundle.mjs',
+        path: 'application-bundle.mjs',
+        language: 'javascript',
+        content: `import { config } from './settings.ts';
+export const run = () => {};`,
+      };
+
+      const settingsTs: ProjectFile = {
+        id: 'settings-ts',
+        name: 'settings.ts',
+        path: 'settings.ts',
+        language: 'typescript',
+        content: 'export const config = {};',
+      };
+
+      const { edges } = buildGraphFromFiles([appHtml, customLess, appBundle, settingsTs]);
+
+      const htmlToLessEdge = edges.find(
+        (e) => e.source === `node-file-${appHtml.id}` && e.target === `node-file-${customLess.id}`
+      );
+      assert.ok(htmlToLessEdge);
+      assert.strictEqual(htmlToLessEdge.type, 'IMPORTS');
+      assert.strictEqual(htmlToLessEdge.label, 'STYLESHEET');
+
+      const htmlToBundleEdge = edges.find(
+        (e) => e.source === `node-file-${appHtml.id}` && e.target === `node-file-${appBundle.id}`
+      );
+      assert.ok(htmlToBundleEdge);
+      assert.strictEqual(htmlToBundleEdge.type, 'IMPORTS');
+      assert.strictEqual(htmlToBundleEdge.label, 'SCRIPT');
+
+      const bundleToSettingsEdge = edges.find(
+        (e) => e.source === `node-file-${appBundle.id}` && e.target === `node-file-${settingsTs.id}`
+      );
+      assert.ok(bundleToSettingsEdge);
+      assert.strictEqual(bundleToSettingsEdge.type, 'IMPORTS');
+      assert.strictEqual(bundleToSettingsEdge.label, 'IMPORTS');
     });
   });
 });

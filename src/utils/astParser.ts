@@ -13,6 +13,9 @@ export interface FileAnalysisResult {
     isDefault: boolean;
     isNamespace: boolean;
     line: number;
+    kind?: 'stylesheet' | 'script' | 'import';
+    sourceTag?: 'link' | 'script' | 'style' | 'import';
+    rel?: string;
   }>;
   exports: Array<{
     name: string;
@@ -717,6 +720,8 @@ export function analyzeHtmlFile(file: ProjectFile, allFiles: ProjectFile[] = [])
       const resolvedPath = resolveImportPath(href, file.path, allFiles);
       const fileName = href.split('/').pop() || href;
 
+      const isStylesheet = rel === 'stylesheet' || rel.split(/\s+/).includes('stylesheet');
+
       result.imports.push({
         specifier: href,
         resolvedPath,
@@ -724,6 +729,9 @@ export function analyzeHtmlFile(file: ProjectFile, allFiles: ProjectFile[] = [])
         isDefault: true,
         isNamespace: false,
         line,
+        kind: isStylesheet ? 'stylesheet' : undefined,
+        sourceTag: 'link',
+        rel: rel || undefined,
       });
     }
   }
@@ -750,6 +758,8 @@ export function analyzeHtmlFile(file: ProjectFile, allFiles: ProjectFile[] = [])
           isDefault: true,
           isNamespace: false,
           line,
+          kind: 'script',
+          sourceTag: 'script',
         });
       }
     } else if (inlineBody && inlineBody.trim()) {
@@ -810,6 +820,8 @@ export function analyzeHtmlFile(file: ProjectFile, allFiles: ProjectFile[] = [])
               isDefault: false,
               isNamespace: false,
               line: impLine,
+              kind: 'import',
+              sourceTag: 'import',
             });
           }
 
@@ -839,6 +851,8 @@ export function analyzeHtmlFile(file: ProjectFile, allFiles: ProjectFile[] = [])
         isDefault: true,
         isNamespace: false,
         line: imp.line,
+        kind: 'stylesheet',
+        sourceTag: 'style',
       });
     }
   }
@@ -1157,12 +1171,49 @@ export function buildGraphFromFiles(files: ProjectFile[]): {
           const importEdgeId = `edge-import-${file.id}-${targetFile.id}`;
 
           if (!edgeSet.has(importEdgeId)) {
+            let label = 'IMPORTS';
+
+            const isHtmlSource =
+              file.language === 'html' ||
+              file.name.endsWith('.html') ||
+              file.name.endsWith('.htm');
+
+            if (isHtmlSource) {
+              const targetExt = targetFile.name.split('.').pop()?.toLowerCase() || '';
+              const isStylesheetTarget =
+                targetFile.language === 'css' ||
+                targetFile.language === 'scss' ||
+                targetFile.language === 'less' ||
+                ['css', 'scss', 'less'].includes(targetExt);
+
+              const isScriptTarget =
+                targetFile.language === 'javascript' ||
+                targetFile.language === 'typescript' ||
+                ['js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs'].includes(targetExt);
+
+              if (
+                imp.sourceTag === 'link' &&
+                (imp.kind === 'stylesheet' || (imp.rel && imp.rel.includes('stylesheet')) || isStylesheetTarget)
+              ) {
+                label = 'STYLESHEET';
+              } else if (
+                imp.sourceTag === 'script' &&
+                (imp.kind === 'script' || isScriptTarget)
+              ) {
+                label = 'SCRIPT';
+              } else if (imp.sourceTag === 'style' || imp.kind === 'stylesheet') {
+                label = 'STYLESHEET';
+              } else if (imp.kind === 'script') {
+                label = 'SCRIPT';
+              }
+            }
+
             edges.push({
               id: importEdgeId,
               source: fileNodeId,
               target: targetNodeId,
               type: 'IMPORTS',
-              label: 'IMPORTS',
+              label,
               isImpactPath: file.isModified || targetFile.isModified,
             });
             edgeSet.add(importEdgeId);
