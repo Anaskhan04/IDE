@@ -227,6 +227,9 @@ interface IDEContextType {
   // GitHub Authentication & Remote Sync
   githubUser: GitHubUser | null;
   githubToken: string;
+  githubAuthMethod: 'oauth' | 'gh-cli' | 'pat' | null;
+  githubOAuthConfigured: boolean;
+  githubCliAvailable: boolean;
   githubRepos: GitHubRepo[];
   isGitHubModalOpen: boolean;
   setIsGitHubModalOpen: (open: boolean) => void;
@@ -239,6 +242,9 @@ interface IDEContextType {
   gitAhead: number;
   gitBehind: number;
   fetchFromRemote: () => Promise<boolean>;
+  refreshGitHubAuthStatus: () => Promise<void>;
+  loginWithGitHubCli: () => Promise<boolean>;
+  setAuthenticatedGitHubUser: (user: GitHubUser, method: 'oauth' | 'gh-cli' | 'pat') => Promise<void>;
   loginWithGitHubToken: (token: string) => Promise<boolean>;
   logoutGitHub: () => void;
   fetchGitHubRepos: () => Promise<void>;
@@ -459,22 +465,12 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [terminalCwd, setTerminalCwd] = useState<string>('');
   const [isRunningCommand, setIsRunningCommand] = useState<boolean>(false);
 
-  // GitHub Authentication & Remote Sync State
-  const [githubToken, setGithubToken] = useState<string>(() => {
-    try {
-      return localStorage.getItem('intellicode_github_token') || '';
-    } catch {
-      return '';
-    }
-  });
-  const [githubUser, setGithubUser] = useState<GitHubUser | null>(() => {
-    try {
-      const raw = localStorage.getItem('intellicode_github_user');
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  });
+  // GitHub Authentication & Remote Sync State (tokens are managed strictly on backend)
+  const [githubToken] = useState<string>('');
+  const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
+  const [githubAuthMethod, setGithubAuthMethod] = useState<'oauth' | 'gh-cli' | 'pat' | null>(null);
+  const [githubOAuthConfigured, setGithubOAuthConfigured] = useState<boolean>(false);
+  const [githubCliAvailable, setGithubCliAvailable] = useState<boolean>(false);
   const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([]);
   const [isGitHubModalOpen, setIsGitHubModalOpen] = useState<boolean>(false);
   const [isGitHubLoading, setIsGitHubLoading] = useState<boolean>(false);
@@ -1813,18 +1809,77 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setTerminalHistory([]);
   };
 
-  const fetchGitHubRepos = async (overrideToken?: string): Promise<void> => {
-    const tok = overrideToken || githubToken;
-    if (!tok) return;
+  const refreshGitHubAuthStatus = async (): Promise<void> => {
+    // Purge any legacy plaintext token from browser localStorage
+    try {
+      localStorage.removeItem('intellicode_github_token');
+      localStorage.removeItem('intellicode_github_user');
+    } catch {
+      // ignore
+    }
+
+    const res = await githubService.getAuthStatus();
+    setGithubOAuthConfigured(Boolean(res.oauthConfigured));
+    setGithubCliAvailable(Boolean(res.ghCliAvailable));
+
+    if (res.authenticated && res.user) {
+      setGithubUser(res.user);
+      setGithubAuthMethod(res.authMethod || null);
+      setGithubError(null);
+    } else {
+      setGithubUser(null);
+      setGithubAuthMethod(null);
+      if (res.expired && res.error) {
+        setGithubError(res.error);
+      }
+    }
+  };
+
+  useEffect(() => {
+    refreshGitHubAuthStatus();
+  }, []);
+
+  const fetchGitHubRepos = async (): Promise<void> => {
     setIsGitHubLoading(true);
     setGithubError(null);
-    const res = await githubService.listRepos(tok);
+    const res = await githubService.listRepos();
     if (res.success && res.repos) {
       setGithubRepos(res.repos);
+    } else if (res.unauthorized) {
+      setGithubUser(null);
+      setGithubAuthMethod(null);
+      setGithubRepos([]);
+      setGithubError(res.error || 'GitHub session expired. Please sign in again.');
     } else if (res.error) {
       setGithubError(res.error);
     }
     setIsGitHubLoading(false);
+  };
+
+  const setAuthenticatedGitHubUser = async (
+    user: GitHubUser,
+    method: 'oauth' | 'gh-cli' | 'pat'
+  ): Promise<void> => {
+    setGithubUser(user);
+    setGithubAuthMethod(method);
+    setGithubError(null);
+    await fetchGitHubRepos();
+  };
+
+  const loginWithGitHubCli = async (): Promise<boolean> => {
+    setIsGitHubLoading(true);
+    setGithubError(null);
+    const res = await githubService.loginWithCli();
+    if (!res.success || !res.user) {
+      setGithubError(res.error || 'Failed to authenticate with GitHub CLI');
+      setIsGitHubLoading(false);
+      return false;
+    }
+    setGithubUser(res.user);
+    setGithubAuthMethod('gh-cli');
+    await fetchGitHubRepos();
+    setIsGitHubLoading(false);
+    return true;
   };
 
   const loginWithGitHubToken = async (token: string): Promise<boolean> => {
@@ -1832,28 +1887,23 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!cleanToken) return false;
     setIsGitHubLoading(true);
     setGithubError(null);
-    const res = await githubService.verifyToken(cleanToken);
+    const res = await githubService.loginWithPat(cleanToken);
     if (!res.success || !res.user) {
       setGithubError(res.error || 'Failed to authenticate with GitHub');
       setIsGitHubLoading(false);
       return false;
     }
-    setGithubToken(cleanToken);
     setGithubUser(res.user);
-    try {
-      localStorage.setItem('intellicode_github_token', cleanToken);
-      localStorage.setItem('intellicode_github_user', JSON.stringify(res.user));
-    } catch {
-      // ignore
-    }
-    await fetchGitHubRepos(cleanToken);
+    setGithubAuthMethod('pat');
+    await fetchGitHubRepos();
     setIsGitHubLoading(false);
     return true;
   };
 
-  const logoutGitHub = () => {
-    setGithubToken('');
+  const logoutGitHub = async () => {
+    await githubService.logout();
     setGithubUser(null);
+    setGithubAuthMethod(null);
     setGithubRepos([]);
     setGithubError(null);
     try {
@@ -1868,7 +1918,6 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIsGitHubLoading(true);
     setGithubError(null);
     const res = await githubService.cloneRepo({
-      token: githubToken || undefined,
       cloneUrl: repo.cloneUrl,
       repoName: repo.name,
       owner: repo.owner,
@@ -1909,13 +1958,17 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     description: string,
     isPrivate: boolean
   ): Promise<GitHubRepo | null> => {
-    if (!githubToken) {
+    if (!githubUser) {
       setGithubError('Please sign in with GitHub first.');
       return null;
     }
     setIsGitHubLoading(true);
     setGithubError(null);
-    const res = await githubService.createRepo(githubToken, name, description, isPrivate);
+    const res = await githubService.createRepo(name, description, isPrivate);
+    if (res.unauthorized) {
+      setGithubUser(null);
+      setGithubAuthMethod(null);
+    }
     if (!res.success || !res.repo) {
       setGithubError(res.error || 'Failed to create repository');
       setIsGitHubLoading(false);
@@ -1931,7 +1984,7 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     description: string,
     isPrivate: boolean
   ): Promise<boolean> => {
-    if (!githubToken || !githubUser) {
+    if (!githubUser) {
       setGithubError('Please sign in with GitHub first.');
       return false;
     }
@@ -1943,11 +1996,14 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       repoName,
       description,
       isPrivate,
-      token: githubToken,
       authorName: githubUser.name || githubUser.login,
       authorEmail: githubUser.email,
       files: files.map(f => ({ path: f.path, content: f.content })),
     });
+    if (res.unauthorized) {
+      setGithubUser(null);
+      setGithubAuthMethod(null);
+    }
 
     if (!res.success || !res.repoRoot) {
       setGitError(res.error || 'Failed to publish repository to GitHub');
@@ -2386,6 +2442,9 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         clearTerminal,
         githubUser,
         githubToken,
+        githubAuthMethod,
+        githubOAuthConfigured,
+        githubCliAvailable,
         githubRepos,
         isGitHubModalOpen,
         setIsGitHubModalOpen,
@@ -2398,6 +2457,9 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         gitAhead,
         gitBehind,
         fetchFromRemote,
+        refreshGitHubAuthStatus,
+        loginWithGitHubCli,
+        setAuthenticatedGitHubUser,
         loginWithGitHubToken,
         logoutGitHub,
         fetchGitHubRepos,

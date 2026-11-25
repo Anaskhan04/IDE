@@ -12,6 +12,20 @@ import {
   parseGitStatusPorcelain,
   runGit,
 } from './vite-git-utils.js';
+import {
+  clearBackendSession,
+  getActiveGitHubToken,
+  getConfiguredOAuthClientId,
+  githubApiFetch,
+  isTrustedGitHubUrl,
+  loadBackendSession,
+  pollOAuthDeviceToken,
+  readGhCliToken,
+  sanitizeCredentialText,
+  saveBackendSession,
+  startOAuthDeviceFlow,
+  verifyGitHubToken,
+} from './vite-github-utils.js';
 
 /**
  * Resolve a relative file/folder path safely inside a workspace root.
@@ -586,7 +600,7 @@ export function gitApiPlugin() {
           if (!repoRoot || !fs.existsSync(repoRoot)) {
             return sendJson(res, 400, { error: 'Invalid repository directory' });
           }
-          const fetchRes = await fetchFromRemote(repoRoot, body.token);
+          const fetchRes = await fetchFromRemote(repoRoot, getActiveGitHubToken() || body.token);
           return sendJson(res, 200, fetchRes);
         }
 
@@ -599,7 +613,7 @@ export function gitApiPlugin() {
           const branchRes = await runGit(['branch', '--show-current'], repoRoot);
           const branch = body.branch || branchRes.stdout.trim() || 'main';
           const args = ['push', '-u', 'origin', branch];
-          const pushRes = await runGit(args, repoRoot, body.token);
+          const pushRes = await runGit(args, repoRoot, getActiveGitHubToken() || body.token);
 
           if (pushRes.code !== 0) {
             return sendJson(res, 200, {
@@ -623,7 +637,7 @@ export function gitApiPlugin() {
 
           const branchRes = await runGit(['branch', '--show-current'], repoRoot);
           const branch = body.branch || branchRes.stdout.trim() || 'main';
-          const pullRes = await runGit(['pull', 'origin', branch], repoRoot, body.token);
+          const pullRes = await runGit(['pull', 'origin', branch], repoRoot, getActiveGitHubToken() || body.token);
 
           if (pullRes.code !== 0) {
             return sendJson(res, 200, {
@@ -983,93 +997,134 @@ export function gitApiPlugin() {
         }
 
         // ============================================================
-        // GITHUB AUTH & REPOSITORY INTEGRATION
+        // GITHUB AUTH & REPOSITORY INTEGRATION (Backend-Managed Session)
         // ============================================================
 
-        if (url === '/api/github/user') {
-          if (!body.token) {
-            return sendJson(res, 400, { success: false, error: 'GitHub token is required' });
-          }
-          const gh = await githubFetch('/user', body.token);
-          if (!gh.ok) {
-            return sendJson(res, gh.status, {
-              success: false,
-              error: gh.data?.message || 'Invalid GitHub token',
+        if (url === '/api/github/status') {
+          const oauthConfigured = Boolean(getConfiguredOAuthClientId());
+          const ghToken = await readGhCliToken();
+          const ghCliAvailable = Boolean(ghToken);
+
+          const session = loadBackendSession();
+          if (!session.token) {
+            return sendJson(res, 200, {
+              success: true,
+              authenticated: false,
+              user: null,
+              authMethod: null,
+              oauthConfigured,
+              ghCliAvailable,
             });
           }
-          const scopes = gh.headers.get('x-oauth-scopes') || '';
+
+          const verified = await verifyGitHubToken(session.token);
+          if (!verified.success || !verified.user) {
+            clearBackendSession();
+            return sendJson(res, 200, {
+              success: true,
+              authenticated: false,
+              user: null,
+              authMethod: null,
+              expired: verified.unauthorized,
+              error: verified.unauthorized ? 'GitHub session expired or invalid. Please sign in again.' : verified.error,
+              oauthConfigured,
+              ghCliAvailable,
+            });
+          }
+
+          saveBackendSession({ token: session.token, authMethod: session.authMethod, user: verified.user });
           return sendJson(res, 200, {
             success: true,
-            user: {
-              login: gh.data.login,
-              name: gh.data.name || gh.data.login,
-              avatarUrl: gh.data.avatar_url,
-              htmlUrl: gh.data.html_url,
-              email: gh.data.email || `${gh.data.login}@users.noreply.github.com`,
-              scopes,
-            },
+            authenticated: true,
+            user: verified.user,
+            authMethod: session.authMethod,
+            oauthConfigured,
+            ghCliAvailable,
           });
+        }
+
+        if (url === '/api/github/login-cli') {
+          const cliToken = await readGhCliToken();
+          if (!cliToken) {
+            return sendJson(res, 400, {
+              success: false,
+              error: 'GitHub CLI (`gh`) is not signed in on this computer. Run `gh auth login` or use another sign-in method.',
+            });
+          }
+          const verified = await verifyGitHubToken(cliToken);
+          if (!verified.success || !verified.user) {
+            return sendJson(res, verified.status || 401, {
+              success: false,
+              error: verified.error || 'GitHub CLI token is invalid or expired.',
+            });
+          }
+          saveBackendSession({ token: cliToken, authMethod: 'gh-cli', user: verified.user });
+          return sendJson(res, 200, {
+            success: true,
+            authenticated: true,
+            user: verified.user,
+            authMethod: 'gh-cli',
+          });
+        }
+
+        if (url === '/api/github/login-pat' || url === '/api/github/user') {
+          const tok = String(body.token || '').trim();
+          if (!tok) {
+            return sendJson(res, 400, { success: false, error: 'Personal Access Token is required' });
+          }
+          const verified = await verifyGitHubToken(tok);
+          if (!verified.success || !verified.user) {
+            return sendJson(res, verified.status || 401, {
+              success: false,
+              unauthorized: verified.unauthorized,
+              error: verified.error || 'Invalid GitHub token',
+            });
+          }
+          saveBackendSession({ token: tok, authMethod: 'pat', user: verified.user });
+          return sendJson(res, 200, {
+            success: true,
+            authenticated: true,
+            user: verified.user,
+            authMethod: 'pat',
+          });
+        }
+
+        if (url === '/api/github/logout') {
+          clearBackendSession();
+          return sendJson(res, 200, { success: true });
         }
 
         if (url === '/api/github/device-code') {
-          const clientId = (body.clientId || '').trim();
-          if (!clientId) {
-            return sendJson(res, 400, { success: false, error: 'GitHub OAuth Client ID is required for Device Flow' });
+          const result = await startOAuthDeviceFlow({ clientId: body.clientId });
+          if (!result.success) {
+            return sendJson(res, 400, result);
           }
-          const resDevice = await fetch('https://github.com/login/device/code', {
-            method: 'POST',
-            headers: {
-              Accept: 'application/json',
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              client_id: clientId,
-              scope: 'repo read:user user:email',
-            }),
-          });
-          const data = await resDevice.json().catch(() => ({}));
-          if (!resDevice.ok || data.error) {
-            return sendJson(res, 400, {
-              success: false,
-              error: data.error_description || data.error || 'Failed to initiate GitHub Device Flow',
-            });
-          }
-          return sendJson(res, 200, { success: true, ...data });
+          return sendJson(res, 200, result);
         }
 
         if (url === '/api/github/device-token') {
-          const { clientId, deviceCode } = body;
-          if (!clientId || !deviceCode) {
-            return sendJson(res, 400, { success: false, error: 'clientId and deviceCode are required' });
-          }
-          const resToken = await fetch('https://github.com/login/oauth/access_token', {
-            method: 'POST',
-            headers: {
-              Accept: 'application/json',
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              client_id: clientId,
-              device_code: deviceCode,
-              grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-            }),
+          const result = await pollOAuthDeviceToken({
+            clientId: body.clientId,
+            deviceCode: body.deviceCode,
           });
-          const data = await resToken.json().catch(() => ({}));
-          return sendJson(res, 200, { success: !!data.access_token, ...data });
+          return sendJson(res, 200, result);
         }
 
         if (url === '/api/github/repos') {
-          if (!body.token) {
-            return sendJson(res, 401, { success: false, error: 'GitHub authentication required' });
+          const activeToken = getActiveGitHubToken() || body.token;
+          if (!activeToken) {
+            return sendJson(res, 401, { success: false, unauthorized: true, error: 'GitHub authentication required' });
           }
-          const gh = await githubFetch(
+          const gh = await githubApiFetch(
             '/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member',
-            body.token
+            activeToken
           );
           if (!gh.ok) {
+            if (gh.status === 401) clearBackendSession();
             return sendJson(res, gh.status, {
               success: false,
-              error: gh.data?.message || 'Failed to fetch repositories',
+              unauthorized: gh.status === 401,
+              error: sanitizeCredentialText(gh.data?.message || 'Failed to fetch repositories', activeToken),
             });
           }
           const repos = (Array.isArray(gh.data) ? gh.data : []).map((r) => ({
@@ -1089,11 +1144,16 @@ export function gitApiPlugin() {
         }
 
         if (url === '/api/github/create-repo') {
-          const { token, name, description = '', isPrivate = true } = body;
-          if (!token || !name) {
-            return sendJson(res, 400, { success: false, error: 'Token and repository name are required' });
+          const activeToken = getActiveGitHubToken() || body.token;
+          const { name, description = '', isPrivate = true } = body;
+          if (!activeToken || !name) {
+            return sendJson(res, activeToken ? 400 : 401, {
+              success: false,
+              unauthorized: !activeToken,
+              error: activeToken ? 'Repository name is required' : 'GitHub authentication required',
+            });
           }
-          const gh = await githubFetch('/user/repos', token, {
+          const gh = await githubApiFetch('/user/repos', activeToken, {
             method: 'POST',
             body: {
               name: name.trim(),
@@ -1103,9 +1163,14 @@ export function gitApiPlugin() {
             },
           });
           if (!gh.ok) {
+            if (gh.status === 401) clearBackendSession();
             return sendJson(res, gh.status, {
               success: false,
-              error: gh.data?.errors?.[0]?.message || gh.data?.message || 'Failed to create repository on GitHub',
+              unauthorized: gh.status === 401,
+              error: sanitizeCredentialText(
+                gh.data?.errors?.[0]?.message || gh.data?.message || 'Failed to create repository on GitHub',
+                activeToken
+              ),
             });
           }
           return sendJson(res, 200, {
@@ -1127,9 +1192,13 @@ export function gitApiPlugin() {
         }
 
         if (url === '/api/github/clone') {
-          const { token, cloneUrl, repoName, owner } = body;
+          const activeToken = getActiveGitHubToken() || body.token;
+          const { cloneUrl, repoName, owner } = body;
           if (!cloneUrl || !repoName) {
             return sendJson(res, 400, { success: false, error: 'cloneUrl and repoName are required' });
+          }
+          if (!isTrustedGitHubUrl(cloneUrl)) {
+            return sendJson(res, 400, { success: false, error: 'Untrusted repository URL. Only https://github.com/ remotes are permitted.' });
           }
 
           const baseProjectsDir = path.join(os.homedir(), 'IntelliCodeProjects');
@@ -1138,16 +1207,16 @@ export function gitApiPlugin() {
           const targetDir = path.join(baseProjectsDir, safeDirName.replace(/[^a-zA-Z0-9._-]/g, '-'));
 
           if (fs.existsSync(path.join(targetDir, '.git'))) {
-            await runGit(['pull'], targetDir, token);
+            await runGit(['pull'], targetDir, activeToken);
           } else {
             if (fs.existsSync(targetDir)) {
               fs.rmSync(targetDir, { recursive: true, force: true });
             }
-            const cloneRes = await runGit(['clone', cloneUrl, targetDir], baseProjectsDir, token);
+            const cloneRes = await runGit(['clone', cloneUrl, targetDir], baseProjectsDir, activeToken);
             if (cloneRes.code !== 0) {
               return sendJson(res, 200, {
                 success: false,
-                error: cloneRes.stderr || 'Failed to clone repository',
+                error: formatGitError(cloneRes.stderr, 'Failed to clone repository'),
               });
             }
           }
@@ -1167,20 +1236,24 @@ export function gitApiPlugin() {
         }
 
         if (url === '/api/git/publish') {
+          const activeToken = getActiveGitHubToken() || body.token;
           const {
             workspacePath,
             repoName,
             description = '',
             isPrivate = true,
-            token,
             commitMessage = 'Initial commit from IntelliCode IDE',
             authorName,
             authorEmail,
             files: memoryFiles,
           } = body;
 
-          if (!token || !repoName) {
-            return sendJson(res, 400, { success: false, error: 'GitHub token and repository name are required' });
+          if (!activeToken || !repoName) {
+            return sendJson(res, activeToken ? 400 : 401, {
+              success: false,
+              unauthorized: !activeToken,
+              error: activeToken ? 'Repository name is required' : 'GitHub authentication required',
+            });
           }
 
           let targetDir = workspacePath && fs.existsSync(workspacePath) ? workspacePath : null;
@@ -1198,7 +1271,7 @@ export function gitApiPlugin() {
             }
           }
 
-          const gh = await githubFetch('/user/repos', token, {
+          const gh = await githubApiFetch('/user/repos', activeToken, {
             method: 'POST',
             body: {
               name: repoName.trim(),
@@ -1209,9 +1282,14 @@ export function gitApiPlugin() {
           });
 
           if (!gh.ok) {
-            return sendJson(res, 200, {
+            if (gh.status === 401) clearBackendSession();
+            return sendJson(res, gh.status, {
               success: false,
-              error: gh.data?.errors?.[0]?.message || gh.data?.message || 'Failed to create GitHub repository',
+              unauthorized: gh.status === 401,
+              error: sanitizeCredentialText(
+                gh.data?.errors?.[0]?.message || gh.data?.message || 'Failed to create GitHub repository',
+                activeToken
+              ),
             });
           }
 
@@ -1258,7 +1336,7 @@ export function gitApiPlugin() {
 
           const branchRes = await runGit(['branch', '--show-current'], targetDir);
           const branch = branchRes.stdout.trim() || 'main';
-          const pushRes = await runGit(['push', '-u', 'origin', branch], targetDir, token);
+          const pushRes = await runGit(['push', '-u', 'origin', branch], targetDir, activeToken);
 
           if (pushRes.code !== 0) {
             return sendJson(res, 200, {

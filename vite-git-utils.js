@@ -1,33 +1,38 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { sanitizeCredentialText } from './vite-github-utils.js';
 
 /**
- * Execute a git command safely with explicit argument arrays (preventing shell injection).
+ * Execute a git command safely with explicit argument arrays (preventing shell injection)
+ * and pass GitHub credentials via scoped GIT_CONFIG_* env vars rather than CLI args.
  */
 export function runGit(args, cwd, token) {
   return new Promise((resolve) => {
-    let finalArgs = args;
+    const gitEnv = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: '0',
+    };
+
     if (token) {
       const basicAuth = Buffer.from(`x-access-token:${token}`).toString('base64');
-      finalArgs = ['-c', `http.extraheader=AUTHORIZATION: basic ${basicAuth}`, ...args];
+      gitEnv.GIT_CONFIG_COUNT = '1';
+      gitEnv.GIT_CONFIG_KEY_0 = 'http.https://github.com/.extraheader';
+      gitEnv.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${basicAuth}`;
     }
 
     execFile(
       'git',
-      finalArgs,
+      args,
       {
         cwd,
         maxBuffer: 10 * 1024 * 1024,
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: '0',
-        },
+        env: gitEnv,
       },
       (err, stdout, stderr) => {
         resolve({
-          stdout: stdout ? stdout.toString() : '',
-          stderr: stderr ? stderr.toString() : '',
+          stdout: sanitizeCredentialText(stdout ? stdout.toString() : '', token),
+          stderr: sanitizeCredentialText(stderr ? stderr.toString() : '', token),
           code: err ? (err.code || 1) : 0,
         });
       }

@@ -1,6 +1,6 @@
 import type { GitHubRepo, GitHubUser, ProjectFile } from '../types/ide';
 
-async function postJson<T>(url: string, body: any): Promise<T> {
+async function postJson<T>(url: string, body: any = {}): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -14,16 +14,69 @@ async function postJson<T>(url: string, body: any): Promise<T> {
 }
 
 export const githubService = {
-  async verifyToken(token: string): Promise<{ success: boolean; user?: GitHubUser; error?: string }> {
+  async getAuthStatus(): Promise<{
+    success: boolean;
+    authenticated: boolean;
+    user?: GitHubUser | null;
+    authMethod?: 'oauth' | 'gh-cli' | 'pat' | null;
+    oauthConfigured?: boolean;
+    ghCliAvailable?: boolean;
+    expired?: boolean;
+    error?: string;
+  }> {
     try {
-      return await postJson('/api/github/user', { token });
+      return await postJson('/api/github/status', {});
+    } catch (err: any) {
+      return {
+        success: false,
+        authenticated: false,
+        user: null,
+        error: err?.message || 'Failed to check GitHub session status',
+      };
+    }
+  },
+
+  async loginWithCli(): Promise<{
+    success: boolean;
+    authenticated?: boolean;
+    user?: GitHubUser;
+    authMethod?: 'gh-cli';
+    error?: string;
+  }> {
+    try {
+      return await postJson('/api/github/login-cli', {});
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to sign in with GitHub CLI' };
+    }
+  },
+
+  async loginWithPat(token: string): Promise<{
+    success: boolean;
+    authenticated?: boolean;
+    user?: GitHubUser;
+    authMethod?: 'pat';
+    unauthorized?: boolean;
+    error?: string;
+  }> {
+    try {
+      return await postJson('/api/github/login-pat', { token });
     } catch (err: any) {
       return { success: false, error: err?.message || 'Failed to verify GitHub token' };
     }
   },
 
-  async startDeviceFlow(clientId: string): Promise<{
+  async logout(): Promise<{ success: boolean }> {
+    try {
+      return await postJson('/api/github/logout', {});
+    } catch {
+      return { success: false };
+    }
+  },
+
+  async startDeviceFlow(clientId?: string): Promise<{
     success: boolean;
+    code?: string;
+    clientId?: string;
     device_code?: string;
     user_code?: string;
     verification_uri?: string;
@@ -32,48 +85,57 @@ export const githubService = {
     error?: string;
   }> {
     try {
-      return await postJson('/api/github/device-code', { clientId });
+      return await postJson('/api/github/device-code', clientId ? { clientId } : {});
     } catch (err: any) {
       return { success: false, error: err?.message || 'Failed to start GitHub Device Flow' };
     }
   },
 
-  async pollDeviceToken(clientId: string, deviceCode: string): Promise<{
+  async pollDeviceToken(deviceCode: string, clientId?: string): Promise<{
     success: boolean;
-    access_token?: string;
+    authenticated?: boolean;
+    pending?: boolean;
+    slowDown?: boolean;
+    user?: GitHubUser;
     error?: string;
     error_description?: string;
   }> {
     try {
-      return await postJson('/api/github/device-token', { clientId, deviceCode });
+      return await postJson('/api/github/device-token', {
+        deviceCode,
+        ...(clientId ? { clientId } : {}),
+      });
     } catch (err: any) {
       return { success: false, error: err?.message || 'Polling failed' };
     }
   },
 
-  async listRepos(token: string): Promise<{ success: boolean; repos?: GitHubRepo[]; error?: string }> {
+  async listRepos(): Promise<{
+    success: boolean;
+    repos?: GitHubRepo[];
+    unauthorized?: boolean;
+    error?: string;
+  }> {
     try {
-      return await postJson('/api/github/repos', { token });
+      return await postJson('/api/github/repos', {});
     } catch (err: any) {
       return { success: false, error: err?.message || 'Failed to fetch repositories' };
     }
   },
 
   async createRepo(
-    token: string,
     name: string,
     description: string,
     isPrivate: boolean
-  ): Promise<{ success: boolean; repo?: GitHubRepo; error?: string }> {
+  ): Promise<{ success: boolean; repo?: GitHubRepo; unauthorized?: boolean; error?: string }> {
     try {
-      return await postJson('/api/github/create-repo', { token, name, description, isPrivate });
+      return await postJson('/api/github/create-repo', { name, description, isPrivate });
     } catch (err: any) {
       return { success: false, error: err?.message || 'Failed to create repository' };
     }
   },
 
   async cloneRepo(params: {
-    token?: string;
     cloneUrl: string;
     repoName: string;
     owner?: string;
@@ -98,7 +160,6 @@ export const githubService = {
     repoName: string;
     description?: string;
     isPrivate: boolean;
-    token: string;
     commitMessage?: string;
     authorName?: string;
     authorEmail?: string;
@@ -110,6 +171,7 @@ export const githubService = {
     branch?: string;
     remoteUrl?: string;
     repo?: GitHubRepo;
+    unauthorized?: boolean;
     error?: string;
   }> {
     try {
