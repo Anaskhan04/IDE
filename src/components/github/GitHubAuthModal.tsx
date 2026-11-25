@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   ExternalLink,
   FolderGit2,
   GitBranch,
@@ -45,7 +47,7 @@ export const GitHubAuthModal: React.FC = () => {
   } = useIDE();
 
   const [tokenInput, setTokenInput] = useState('');
-  const [showAdvancedPat, setShowAdvancedPat] = useState(false);
+  const [showAdvancedAuth, setShowAdvancedAuth] = useState(false);
   const [repoFilter, setRepoFilter] = useState('');
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'private' | 'public'>('all');
 
@@ -64,17 +66,23 @@ export const GitHubAuthModal: React.FC = () => {
     clientId?: string;
   } | null>(null);
   const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [popupBlocked, setPopupBlocked] = useState(false);
 
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flowActiveRef = useRef(false);
+  const activeFlowIdRef = useRef(0);
 
   const stopPolling = () => {
     flowActiveRef.current = false;
+    activeFlowIdRef.current += 1;
     if (pollTimeoutRef.current) {
       clearTimeout(pollTimeoutRef.current);
       pollTimeoutRef.current = null;
     }
     setDevicePrompt(null);
+    setCopyStatus('idle');
+    setPopupBlocked(false);
   };
 
   useEffect(() => {
@@ -115,20 +123,60 @@ export const GitHubAuthModal: React.FC = () => {
     const ok = await loginWithGitHubToken(tokenInput.trim());
     if (ok) {
       setTokenInput('');
-      setShowAdvancedPat(false);
+      setShowAdvancedAuth(false);
     }
   };
 
+  const copyAuthorizationCode = async (code: string): Promise<boolean> => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code);
+        setCopyStatus('copied');
+        return true;
+      }
+    } catch {
+      // Fallback below
+    }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const copied = document.execCommand('copy');
+      document.body.removeChild(ta);
+      setCopyStatus(copied ? 'copied' : 'error');
+      return copied;
+    } catch {
+      setCopyStatus('error');
+      return false;
+    }
+  };
+
+  const handleCopyAndOpenGitHub = async () => {
+    if (!devicePrompt) return;
+    await copyAuthorizationCode(devicePrompt.userCode);
+    const opened = window.open(devicePrompt.verificationUri, '_blank', 'noopener,noreferrer');
+    setPopupBlocked(!opened);
+  };
+
   const handleStartDeviceFlow = async () => {
+    if (isStartingOAuth || flowActiveRef.current) return;
     stopPolling();
     setDeviceError(null);
     setIsStartingOAuth(true);
+    const flowId = activeFlowIdRef.current + 1;
+    activeFlowIdRef.current = flowId;
 
     const res = await githubService.startDeviceFlow();
     setIsStartingOAuth(false);
 
+    if (activeFlowIdRef.current !== flowId) return;
+
     if (!res.success || !res.device_code || !res.user_code || !res.verification_uri) {
-      setDeviceError(res.error || 'Could not start GitHub sign-in.');
+      setDeviceError(res.error || 'Could not start GitHub authorization. Please check your network and try again.');
       return;
     }
 
@@ -139,17 +187,17 @@ export const GitHubAuthModal: React.FC = () => {
       deviceCode: res.device_code,
       clientId: res.clientId,
     };
+    // Display the authorization code first before opening GitHub
     setDevicePrompt(promptState);
-    window.open(res.verification_uri, '_blank', 'noopener,noreferrer');
 
     let currentDelayMs = Math.max(5000, (res.interval || 5) * 1000);
 
     const scheduleNextPoll = () => {
-      if (!flowActiveRef.current) return;
+      if (!flowActiveRef.current || activeFlowIdRef.current !== flowId) return;
       pollTimeoutRef.current = setTimeout(async () => {
-        if (!flowActiveRef.current) return;
+        if (!flowActiveRef.current || activeFlowIdRef.current !== flowId) return;
         const tokRes = await githubService.pollDeviceToken(promptState.deviceCode, promptState.clientId);
-        if (!flowActiveRef.current) return;
+        if (!flowActiveRef.current || activeFlowIdRef.current !== flowId) return;
 
         if (tokRes.authenticated && tokRes.user) {
           stopPolling();
@@ -167,11 +215,11 @@ export const GitHubAuthModal: React.FC = () => {
 
         stopPolling();
         if (tokRes.error === 'expired_token') {
-          setDeviceError('GitHub sign-in code expired. Please try again.');
+          setDeviceError('Authorization code expired. Request a new code to try again.');
         } else if (tokRes.error === 'access_denied') {
-          setDeviceError('GitHub sign-in was cancelled in the browser.');
+          setDeviceError('GitHub authorization was cancelled or denied.');
         } else {
-          setDeviceError(tokRes.error_description || tokRes.error || 'GitHub sign-in failed.');
+          setDeviceError(tokRes.error_description || tokRes.error || 'GitHub authorization failed. Please try again.');
         }
       }, currentDelayMs);
     };
@@ -216,12 +264,12 @@ export const GitHubAuthModal: React.FC = () => {
             <Github className="h-5 w-5 text-ide-strong" aria-hidden="true" />
             <div>
               <h2 id="github-modal-title" className="text-sm font-semibold text-ide-strong">
-                {githubUser ? `GitHub · @${githubUser.login}` : 'Sign in to GitHub'}
+                {githubUser ? `GitHub · @${githubUser.login}` : 'Connect GitHub'}
               </h2>
               <p className="text-[11px] text-ide-muted">
                 {githubUser
                   ? 'Browse, clone, create, and sync private or public repositories.'
-                  : 'Connect your GitHub account using a backend-managed session.'}
+                  : 'Optional external connection for cloning and syncing repositories. Local IDE features work without signing in.'}
               </p>
             </div>
           </div>
@@ -244,139 +292,203 @@ export const GitHubAuthModal: React.FC = () => {
 
         {!githubUser ? (
           <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
-            {/* Primary Browser Sign-In */}
+            {/* Primary Browser Authorization */}
             <div className="rounded-ide-panel border border-ide-border bg-ide-surface p-4 space-y-3">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="text-xs font-semibold text-ide-strong">Browser OAuth Sign-In</div>
+                  <div className="text-xs font-semibold text-ide-strong">Connect GitHub Account</div>
                   <p className="mt-0.5 text-[11px] text-ide-muted">
-                    Authorize IntelliCode in your browser without pasting tokens.
+                    Authorize IntelliCode on GitHub in your browser without pasting personal tokens.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={handleStartDeviceFlow}
-                  disabled={isStartingOAuth || Boolean(devicePrompt)}
+                  disabled={isStartingOAuth || Boolean(devicePrompt) || !githubOAuthConfigured}
                   className="ide-focus-ring inline-flex items-center gap-2 rounded-ide-control bg-ide-focus px-4 py-2 text-xs font-semibold text-ide-strong hover:bg-ide-focus/90 disabled:opacity-50"
                 >
                   <Github className="h-3.5 w-3.5" />
-                  {isStartingOAuth ? 'Starting…' : devicePrompt ? 'Waiting…' : 'Sign in with GitHub'}
+                  {isStartingOAuth ? 'Requesting code…' : devicePrompt ? 'Waiting for GitHub…' : 'Connect GitHub'}
                 </button>
               </div>
 
-              {!githubOAuthConfigured && !deviceError && !devicePrompt && (
-                <div className="rounded-ide-control border border-ide-border bg-ide-bg px-3 py-2 text-[11px] text-ide-muted">
-                  Server OAuth Client ID (<code className="font-mono text-ide-text">GITHUB_OAUTH_CLIENT_ID</code>) is not configured.
-                  Use GitHub CLI or Personal Access Token below.
-                </div>
-              )}
-
               {deviceError && (
-                <div className="rounded-ide-control border border-ide-rose/30 bg-ide-rose/10 px-3 py-2 text-xs text-ide-rose">
-                  {deviceError}
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-ide-control border border-ide-rose/30 bg-ide-rose/10 px-3 py-2 text-xs text-ide-rose">
+                  <span>{deviceError}</span>
+                  <button
+                    type="button"
+                    onClick={handleStartDeviceFlow}
+                    disabled={isStartingOAuth}
+                    className="ide-focus-ring rounded-ide-control border border-ide-rose/40 bg-ide-bg px-2.5 py-1 text-[11px] font-medium text-ide-strong hover:bg-ide-hover"
+                  >
+                    Try Again
+                  </button>
                 </div>
               )}
 
               {devicePrompt && (
-                <div className="rounded-ide-control border border-ide-focus/40 bg-ide-selected p-3 text-xs space-y-2">
-                  <div className="text-ide-text">
-                    Enter this code at{' '}
-                    <a
-                      href={devicePrompt.verificationUri}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-ide-cyan underline"
-                    >
-                      {devicePrompt.verificationUri} <ExternalLink className="h-3 w-3" />
-                    </a>
+                <div className="rounded-ide-control border border-ide-focus/40 bg-ide-selected p-4 text-xs space-y-3">
+                  <div>
+                    <div className="font-semibold text-ide-strong">Step 1: Copy your authorization code</div>
+                    <p className="mt-0.5 text-[11px] text-ide-muted">
+                      Open GitHub and paste this code when prompted to approve IntelliCode.
+                    </p>
                   </div>
-                  <div className="font-mono text-lg font-bold tracking-widest text-ide-strong">
-                    {devicePrompt.userCode}
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-ide-control border border-ide-border bg-ide-bg px-3.5 py-2.5">
+                    <span className="font-mono text-xl font-bold tracking-widest text-ide-strong select-all">
+                      {devicePrompt.userCode}
+                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => copyAuthorizationCode(devicePrompt.userCode)}
+                        className="ide-focus-ring inline-flex items-center gap-1.5 rounded-ide-control border border-ide-border-strong bg-ide-surface px-2.5 py-1.5 text-[11px] font-medium text-ide-text hover:bg-ide-hover"
+                      >
+                        {copyStatus === 'copied' ? (
+                          <Check className="h-3.5 w-3.5 text-ide-emerald" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                        {copyStatus === 'copied' ? 'Copied!' : 'Copy Code'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCopyAndOpenGitHub}
+                        className="ide-focus-ring inline-flex items-center gap-1.5 rounded-ide-control bg-ide-focus px-3 py-1.5 text-[11px] font-semibold text-ide-strong hover:bg-ide-focus/90"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Copy Code &amp; Open GitHub
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-ide-muted">Waiting for browser authorization…</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        stopPolling();
-                        setDeviceError('GitHub sign-in cancelled.');
-                      }}
-                      className="ide-focus-ring rounded-ide-control border border-ide-border px-2 py-1 text-[10px] text-ide-text hover:bg-ide-hover"
-                    >
-                      Cancel
-                    </button>
+
+                  {copyStatus === 'error' && (
+                    <div className="text-[11px] text-ide-amber">
+                      Clipboard access was blocked by the browser. Please select and copy the code above manually.
+                    </div>
+                  )}
+
+                  {popupBlocked && (
+                    <div className="text-[11px] text-ide-amber">
+                      Browser popup was blocked. Open{' '}
+                      <a
+                        href={devicePrompt.verificationUri}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-ide-cyan underline"
+                      >
+                        {devicePrompt.verificationUri}
+                      </a>{' '}
+                      manually and paste the code.
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-ide-border/60 pt-2.5">
+                    <span className="inline-flex items-center gap-2 text-[11px] text-ide-muted">
+                      <RefreshCw className="h-3 w-3 animate-spin text-ide-cyan" />
+                      Waiting for authorization on GitHub…
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={devicePrompt.verificationUri}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[11px] text-ide-cyan hover:underline"
+                      >
+                        Open {devicePrompt.verificationUri} <ExternalLink className="h-3 w-3" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          stopPolling();
+                          setDeviceError('GitHub authorization was cancelled.');
+                        }}
+                        className="ide-focus-ring rounded-ide-control border border-ide-border px-2.5 py-1 text-[11px] text-ide-text hover:bg-ide-hover"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* GitHub CLI Option */}
-            <div className="rounded-ide-panel border border-ide-border bg-ide-surface p-4 flex items-center justify-between gap-3">
-              <div className="flex items-start gap-2.5">
-                <Terminal className="mt-0.5 h-4 w-4 text-ide-cyan shrink-0" />
-                <div>
-                  <div className="text-xs font-semibold text-ide-strong">GitHub CLI Session</div>
-                  <p className="mt-0.5 text-[11px] text-ide-muted">
-                    {githubCliAvailable
-                      ? 'Detected an active GitHub CLI (`gh`) session on this machine. Token stays strictly on the backend.'
-                      : 'Sign in locally via `gh auth login` in your terminal to connect without pasting tokens.'}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => loginWithGitHubCli()}
-                disabled={!githubCliAvailable || isGitHubLoading}
-                className="ide-focus-ring shrink-0 rounded-ide-control border border-ide-border-strong bg-ide-card px-3 py-1.5 text-xs font-medium text-ide-text hover:bg-ide-hover disabled:opacity-40"
-              >
-                Use GitHub CLI
-              </button>
-            </div>
-
-            {/* Advanced: Personal Access Token (Collapsed by default) */}
+            {/* Advanced Authentication (Collapsed by default: GitHub CLI + Personal Access Token) */}
             <div className="rounded-ide-panel border border-ide-border bg-ide-bg">
               <button
                 type="button"
-                onClick={() => setShowAdvancedPat((v) => !v)}
+                onClick={() => setShowAdvancedAuth((v) => !v)}
                 className="flex w-full items-center justify-between px-4 py-3 text-xs font-medium text-ide-muted hover:text-ide-text"
               >
                 <span className="flex items-center gap-2">
-                  {showAdvancedPat ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                  {showAdvancedAuth ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                   <KeyRound className="h-3.5 w-3.5 text-ide-subtle" />
-                  Advanced: Sign in with Personal Access Token
+                  Advanced authentication
                 </span>
+                {githubCliAvailable && (
+                  <span className="rounded-ide-control border border-ide-cyan/30 bg-ide-cyan/10 px-2 py-0.5 font-mono text-[10px] text-ide-cyan">
+                    GitHub CLI detected
+                  </span>
+                )}
               </button>
 
-              {showAdvancedPat && (
-                <form onSubmit={handleTokenLogin} className="border-t border-ide-border p-4 space-y-3">
-                  <div className="flex items-center justify-between text-[11px] text-ide-muted">
-                    <span>Requires <code className="font-mono text-ide-text">repo</code> scope. Stored only in backend session.</span>
-                    <a
-                      href="https://github.com/settings/tokens/new?scopes=repo,read:user,user:email&description=IntelliCode+IDE"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 font-mono text-[10px] text-ide-focus hover:underline"
-                    >
-                      Create Token <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="password"
-                      value={tokenInput}
-                      onChange={(e) => setTokenInput(e.target.value)}
-                      placeholder="ghp_... or github_pat_..."
-                      className="ide-focus-ring min-w-0 flex-1 rounded-ide-control border border-ide-border-strong bg-ide-surface px-3 py-1.5 font-mono text-xs text-ide-strong outline-none"
-                    />
+              {showAdvancedAuth && (
+                <div className="border-t border-ide-border p-4 space-y-4">
+                  {/* GitHub CLI Alternative */}
+                  <div className="rounded-ide-control border border-ide-border bg-ide-surface p-3.5 flex items-center justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <Terminal className="mt-0.5 h-4 w-4 text-ide-cyan shrink-0" />
+                      <div>
+                        <div className="text-xs font-semibold text-ide-strong">GitHub CLI</div>
+                        <p className="mt-0.5 text-[11px] text-ide-muted">
+                          {githubCliAvailable
+                            ? 'An active local GitHub CLI (`gh`) session was detected. Connect using it without pasting tokens.'
+                            : 'Sign in locally via `gh auth login` in your terminal to enable GitHub CLI connection.'}
+                        </p>
+                      </div>
+                    </div>
                     <button
-                      type="submit"
-                      disabled={!tokenInput.trim() || isGitHubLoading}
-                      className="ide-focus-ring rounded-ide-control bg-ide-focus px-4 py-1.5 text-xs font-semibold text-ide-strong hover:bg-ide-focus/90 disabled:opacity-50"
+                      type="button"
+                      onClick={() => loginWithGitHubCli()}
+                      disabled={!githubCliAvailable || isGitHubLoading}
+                      className="ide-focus-ring shrink-0 rounded-ide-control border border-ide-border-strong bg-ide-card px-3 py-1.5 text-xs font-medium text-ide-text hover:bg-ide-hover disabled:opacity-40"
                     >
-                      {isGitHubLoading ? 'Verifying…' : 'Sign in'}
+                      Use GitHub CLI
                     </button>
                   </div>
-                </form>
+
+                  {/* Personal Access Token Alternative */}
+                  <form onSubmit={handleTokenLogin} className="rounded-ide-control border border-ide-border bg-ide-surface p-3.5 space-y-3">
+                    <div className="flex items-center justify-between text-[11px] text-ide-muted">
+                      <span>Sign in with a Personal Access Token that has repository access.</span>
+                      <a
+                        href="https://github.com/settings/tokens/new?scopes=repo,read:user,user:email&description=IntelliCode+IDE"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 font-mono text-[10px] text-ide-focus hover:underline"
+                      >
+                        Create Token <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="password"
+                        value={tokenInput}
+                        onChange={(e) => setTokenInput(e.target.value)}
+                        placeholder="ghp_... or github_pat_..."
+                        className="ide-focus-ring min-w-0 flex-1 rounded-ide-control border border-ide-border-strong bg-ide-bg px-3 py-1.5 font-mono text-xs text-ide-strong outline-none"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!tokenInput.trim() || isGitHubLoading}
+                        className="ide-focus-ring rounded-ide-control bg-ide-focus px-4 py-1.5 text-xs font-semibold text-ide-strong hover:bg-ide-focus/90 disabled:opacity-50"
+                      >
+                        {isGitHubLoading ? 'Verifying…' : 'Sign in'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
               )}
             </div>
           </div>
@@ -395,11 +507,6 @@ export const GitHubAuthModal: React.FC = () => {
                 <div className="text-xs">
                   <div className="flex items-center gap-2 font-semibold text-ide-strong">
                     <span>{githubUser.name}</span>
-                    {githubAuthMethod && (
-                      <span className="rounded-ide-control border border-ide-border bg-ide-bg px-1.5 py-0.5 font-mono text-[9px] text-ide-muted">
-                        via {githubAuthMethod}
-                      </span>
-                    )}
                   </div>
                   <div className="font-mono text-[10px] text-ide-emerald">Connected as @{githubUser.login}</div>
                 </div>

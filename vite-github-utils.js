@@ -39,8 +39,12 @@ export function isTrustedGitHubUrl(urlStr) {
   }
 }
 
+export const DEFAULT_GITHUB_OAUTH_CLIENT_ID = 'Ov23liIZFb3mNjqbCqyc';
+
 export function getConfiguredOAuthClientId(env = process.env) {
-  return String(env.GITHUB_OAUTH_CLIENT_ID || env.VITE_GITHUB_CLIENT_ID || '').trim();
+  return String(
+    env.GITHUB_OAUTH_CLIENT_ID || env.VITE_GITHUB_CLIENT_ID || DEFAULT_GITHUB_OAUTH_CLIENT_ID
+  ).trim();
 }
 
 export function saveBackendSession({ token, authMethod, user }, persistToDisk = false) {

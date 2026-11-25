@@ -1,15 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  AlertCircle,
   CheckCircle2,
   ChevronDown,
   Code2,
   Command,
+  Cpu,
+  FolderGit2,
   Github,
+  HardDrive,
+  KeyRound,
+  LogOut,
   Search,
   Settings,
   Sparkles,
-  User,
+  UploadCloud,
   X,
 } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
@@ -41,6 +45,25 @@ export const TopNav: React.FC = () => {
   const [searchInitialQuery, setSearchInitialQuery] = useState('');
   const [searchMode, setSearchMode] = useState<'all' | 'files' | 'symbols' | 'commands'>('all');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const profilePopoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isProfileOpen) return undefined;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (profilePopoverRef.current && !profilePopoverRef.current.contains(event.target as Node)) {
+        setIsProfileOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsProfileOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isProfileOpen]);
 
   // Global keyboard shortcuts for Search / Quick Open / Command Palette
   useEffect(() => {
@@ -203,144 +226,201 @@ export const TopNav: React.FC = () => {
             <Settings className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
 
-          {/* GitHub Login / Profile Popover */}
-          <button
-            type="button"
-            onClick={() => setIsProfileOpen(!isProfileOpen)}
-            className={`ide-focus-ring flex h-7 items-center gap-1.5 rounded-ide-control border px-2 font-mono text-[10px] font-semibold transition-colors ${
-              githubUser
-                ? 'border-ide-emerald/40 bg-ide-panel text-ide-strong hover:border-ide-emerald'
-                : 'border-ide-border bg-ide-panel text-ide-text hover:border-ide-focus hover:text-ide-focus'
-            }`}
-            title={githubUser ? `GitHub: @${githubUser.login}` : 'Sign in with GitHub'}
-            aria-label="GitHub and Account Status"
-            aria-expanded={isProfileOpen}
-          >
-            {githubUser?.avatarUrl ? (
-              <img src={githubUser.avatarUrl} alt={githubUser.login} className="h-4 w-4 rounded-full" />
-            ) : (
-              <Github className="h-3.5 w-3.5" aria-hidden="true" />
-            )}
-            <span className="hidden sm:inline">{githubUser ? `@${githubUser.login}` : 'GitHub'}</span>
-          </button>
-
-          {/* GitHub Auth & Environment Popover */}
-          {isProfileOpen && (
-            <div
-              className="absolute right-0 top-10 z-50 w-76 rounded-ide-panel border border-ide-border-strong bg-ide-panel p-3.5 shadow-xl font-sans"
-              role="dialog"
-              aria-label="GitHub and account status"
+          {/* Accounts & Connected Services Popover */}
+          <div ref={profilePopoverRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setIsProfileOpen(!isProfileOpen)}
+              className={`ide-focus-ring flex h-7 items-center gap-1.5 rounded-ide-control border px-2 font-mono text-[10px] font-semibold transition-colors ${
+                githubUser
+                  ? 'border-ide-emerald/40 bg-ide-panel text-ide-strong hover:border-ide-emerald'
+                  : 'border-ide-border bg-ide-panel text-ide-text hover:border-ide-focus hover:text-ide-focus'
+              }`}
+              title={githubUser ? `Accounts · GitHub @${githubUser.login}` : 'Accounts & Connected Services'}
+              aria-label="Accounts and connected services"
+              aria-expanded={isProfileOpen}
             >
-              <div className="flex items-center justify-between border-b border-ide-border pb-2.5">
-                <div className="flex items-center gap-2">
-                  {githubUser?.avatarUrl ? (
-                    <img src={githubUser.avatarUrl} alt={githubUser.login} className="h-8 w-8 rounded-full border border-ide-border-strong" />
-                  ) : (
-                    <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-ide-surface font-mono text-xs font-semibold text-ide-strong">
-                      <Github className="h-4 w-4" />
-                    </div>
-                  )}
+              {githubUser?.avatarUrl ? (
+                <img src={githubUser.avatarUrl} alt={githubUser.login} className="h-4 w-4 rounded-full" />
+              ) : (
+                <Github className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              <span className="hidden sm:inline">{githubUser ? `@${githubUser.login}` : 'Accounts'}</span>
+            </button>
+
+            {isProfileOpen && (
+              <div
+                className="absolute right-0 top-9 z-50 w-80 rounded-ide-panel border border-ide-border-strong bg-ide-panel p-3.5 shadow-xl font-sans"
+                role="dialog"
+                aria-label="Accounts and connected services"
+              >
+                <div className="flex items-center justify-between border-b border-ide-border pb-2.5">
                   <div>
-                    <div className="text-xs font-semibold text-ide-strong">
-                      {githubUser ? githubUser.name : 'Not Signed in to GitHub'}
-                    </div>
-                    <div className="text-[10px] text-ide-subtle font-mono">
-                      {githubUser ? `@${githubUser.login}` : 'Local Workspace Mode'}
+                    <div className="text-xs font-semibold text-ide-strong">Accounts &amp; Services</div>
+                    <div className="text-[10px] text-ide-muted">
+                      Local workspace works offline. Connect external services as needed.
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsProfileOpen(false)}
+                    className="ide-focus-ring rounded-ide-control p-1 text-ide-subtle hover:bg-ide-hover hover:text-ide-text"
+                    aria-label="Close accounts menu"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsProfileOpen(false)}
-                  className="text-ide-subtle hover:text-ide-text"
-                  aria-label="Close popover"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
 
-              <div className="mt-3 space-y-2.5 text-[11px]">
-                {githubUser ? (
-                  <div className="flex items-start gap-2 rounded-sm bg-ide-emerald/10 p-2 border border-ide-emerald/30">
-                    <CheckCircle2 className="h-4 w-4 shrink-0 text-ide-emerald mt-0.5" />
-                    <div>
-                      <div className="font-semibold text-ide-strong">GitHub Connected</div>
-                      <p className="mt-0.5 text-[10px] leading-relaxed text-ide-muted">
-                        Direct push, pull, clone, and repo creation enabled for your public &amp; private repositories.
-                      </p>
+                <div className="mt-3 space-y-2.5 text-[11px]">
+                  {/* Local Workspace Status */}
+                  <div className="rounded-ide-control border border-ide-border bg-ide-surface px-3 py-2">
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 font-semibold text-ide-strong">
+                        <HardDrive className="h-3.5 w-3.5 text-ide-cyan" aria-hidden="true" />
+                        Local Workspace
+                      </span>
+                      <span className="rounded-ide-control bg-ide-emerald/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-ide-emerald">
+                        Active
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[10px] text-ide-muted">
+                      <span className="truncate">{masterPrompt.projectName || 'workspace'}</span>
+                      <span className="font-mono text-ide-text">{isGitRepo ? gitBranch || 'HEAD' : 'Local Git off'}</span>
                     </div>
                   </div>
-                ) : (
-                  <div className="flex items-start gap-2 rounded-sm bg-ide-surface/60 p-2 border border-ide-border">
-                    <AlertCircle className="h-4 w-4 shrink-0 text-ide-amber mt-0.5" />
-                    <div>
-                      <div className="font-semibold text-ide-text">GitHub Not Connected</div>
-                      <p className="mt-0.5 text-[10px] leading-relaxed text-ide-muted">
-                        Sign in with GitHub to open private/public repos and push updates directly.
-                      </p>
+
+                  {/* GitHub Connection Status */}
+                  <div className="rounded-ide-control border border-ide-border bg-ide-surface p-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {githubUser?.avatarUrl ? (
+                          <img
+                            src={githubUser.avatarUrl}
+                            alt={githubUser.login}
+                            className="h-7 w-7 shrink-0 rounded-full border border-ide-border-strong"
+                          />
+                        ) : (
+                          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ide-border bg-ide-bg text-ide-strong">
+                            <Github className="h-3.5 w-3.5" aria-hidden="true" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-ide-strong">
+                            {githubUser ? githubUser.name : 'GitHub'}
+                          </div>
+                          <div className="truncate font-mono text-[10px] text-ide-muted">
+                            {githubUser ? `@${githubUser.login}` : 'Not connected'}
+                          </div>
+                        </div>
+                      </div>
+                      {githubUser ? (
+                        <span className="inline-flex items-center gap-1 rounded-ide-control bg-ide-emerald/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-ide-emerald">
+                          <CheckCircle2 className="h-2.5 w-2.5" aria-hidden="true" />
+                          Connected
+                        </span>
+                      ) : (
+                        <span className="rounded-ide-control bg-ide-bg px-1.5 py-0.5 font-mono text-[9px] text-ide-subtle border border-ide-border">
+                          Disconnected
+                        </span>
+                      )}
                     </div>
+
+                    {githubUser ? (
+                      <div className="space-y-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsProfileOpen(false);
+                            setIsGitHubModalOpen(true);
+                          }}
+                          className="ide-focus-ring flex w-full items-center justify-center gap-1.5 rounded-ide-control bg-ide-focus py-1.5 text-[11px] font-semibold text-ide-strong hover:bg-ide-focus/90"
+                        >
+                          <FolderGit2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          Manage GitHub Repositories
+                        </button>
+                        {isGitRepo && (
+                          <button
+                            type="button"
+                            disabled={gitLoading}
+                            onClick={() => {
+                              setIsProfileOpen(false);
+                              pushToGitHub();
+                            }}
+                            className="ide-focus-ring flex w-full items-center justify-center gap-1.5 rounded-ide-control border border-ide-border bg-ide-bg py-1.5 text-[11px] font-medium text-ide-text hover:bg-ide-hover disabled:opacity-50"
+                          >
+                            <UploadCloud className="h-3.5 w-3.5" aria-hidden="true" />
+                            Push Current Branch
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            logoutGitHub();
+                            setIsProfileOpen(false);
+                          }}
+                          className="ide-focus-ring flex w-full items-center justify-center gap-1.5 rounded-ide-control py-1 text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-rose"
+                        >
+                          <LogOut className="h-3 w-3" aria-hidden="true" />
+                          Disconnect GitHub
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsProfileOpen(false);
+                          setIsGitHubModalOpen(true);
+                        }}
+                        className="ide-focus-ring flex w-full items-center justify-center gap-1.5 rounded-ide-control bg-ide-focus py-1.5 text-[11px] font-semibold text-ide-strong hover:bg-ide-focus/90"
+                      >
+                        <Github className="h-3.5 w-3.5" aria-hidden="true" />
+                        Connect GitHub
+                      </button>
+                    )}
                   </div>
-                )}
 
-                <div className="flex justify-between items-center text-[10px] text-ide-muted px-1">
-                  <span>Active Branch:</span>
-                  <span className="font-mono text-ide-text">{isGitRepo ? gitBranch || 'HEAD' : 'No Git'}</span>
-                </div>
-                <div className="flex justify-between items-center text-[10px] text-ide-muted px-1">
-                  <span>Active Model:</span>
-                  <span className="font-mono text-ide-cyan">{activeModel.name}</span>
-                </div>
+                  {/* AI Providers Configuration */}
+                  <div className="rounded-ide-control border border-ide-border bg-ide-surface px-3 py-2 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 font-semibold text-ide-strong">
+                        <Cpu className="h-3.5 w-3.5 text-ide-purple" aria-hidden="true" />
+                        AI Providers
+                      </span>
+                      <span className="max-w-[130px] truncate font-mono text-[10px] text-ide-cyan">
+                        {activeModel.name}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsProfileOpen(false);
+                        setIsModelSwitchingModalOpen(true);
+                      }}
+                      className="ide-focus-ring w-full rounded-ide-control border border-ide-border bg-ide-bg py-1.5 text-center text-[11px] font-medium text-ide-text hover:bg-ide-hover"
+                    >
+                      Configure AI Providers
+                    </button>
+                  </div>
 
-                <div className="pt-2 border-t border-ide-border space-y-1.5">
+                  {/* Advanced Authentication Settings */}
                   <button
                     type="button"
                     onClick={() => {
                       setIsProfileOpen(false);
                       setIsGitHubModalOpen(true);
                     }}
-                    className="ide-focus-ring w-full rounded-ide-control bg-ide-focus py-1.5 text-center text-[11px] font-semibold text-white hover:bg-ide-focus/90"
+                    className="ide-focus-ring flex w-full items-center justify-between rounded-ide-control border border-ide-border bg-ide-bg px-3 py-1.5 text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
                   >
-                    {githubUser ? 'Browse & Open GitHub Repos' : 'Sign in with GitHub'}
+                    <span className="flex items-center gap-1.5">
+                      <KeyRound className="h-3 w-3 text-ide-subtle" aria-hidden="true" />
+                      Advanced authentication settings
+                    </span>
+                    <span className="font-mono text-ide-subtle">GitHub</span>
                   </button>
-                  {githubUser && isGitRepo && (
-                    <button
-                      type="button"
-                      disabled={gitLoading}
-                      onClick={() => {
-                        setIsProfileOpen(false);
-                        pushToGitHub();
-                      }}
-                      className="ide-focus-ring w-full rounded-ide-control bg-ide-surface py-1.5 text-center text-[11px] font-medium text-ide-text hover:bg-ide-hover border border-ide-border disabled:opacity-50"
-                    >
-                      Push Current Branch to GitHub
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsProfileOpen(false);
-                      setIsModelSwitchingModalOpen(true);
-                    }}
-                    className="ide-focus-ring w-full rounded-ide-control bg-ide-surface py-1.5 text-center text-[11px] font-medium text-ide-text hover:bg-ide-hover border border-ide-border"
-                  >
-                    Configure AI Models &amp; API Keys
-                  </button>
-                  {githubUser && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        logoutGitHub();
-                        setIsProfileOpen(false);
-                      }}
-                      className="ide-focus-ring w-full rounded-ide-control py-1 text-center text-[10px] text-ide-muted hover:text-ide-rose"
-                    >
-                      Sign out of GitHub
-                    </button>
-                  )}
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </header>
 

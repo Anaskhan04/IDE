@@ -2,7 +2,9 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import {
   clearBackendSession,
+  DEFAULT_GITHUB_OAUTH_CLIENT_ID,
   getActiveGitHubToken,
+  getConfiguredOAuthClientId,
   isTrustedGitHubUrl,
   pollOAuthDeviceToken,
   sanitizeCredentialText,
@@ -33,11 +35,41 @@ describe('GitHub Authentication & Credential Security (Mocked HTTP)', () => {
     assert.strictEqual(getActiveGitHubToken(), '');
   });
 
-  it('reports missing OAuth configuration honestly', async () => {
-    const res = await startOAuthDeviceFlow({ env: {} });
-    assert.strictEqual(res.success, false);
-    assert.strictEqual(res.code, 'OAUTH_NOT_CONFIGURED');
-    assert.ok(res.error && res.error.includes('GITHUB_OAUTH_CLIENT_ID'));
+  it('uses registered IntelliCode OAuth Client ID by default and allows GITHUB_OAUTH_CLIENT_ID override', async () => {
+    assert.strictEqual(DEFAULT_GITHUB_OAUTH_CLIENT_ID, 'Ov23liIZFb3mNjqbCqyc');
+    assert.strictEqual(getConfiguredOAuthClientId({}), 'Ov23liIZFb3mNjqbCqyc');
+    assert.strictEqual(
+      getConfiguredOAuthClientId({ GITHUB_OAUTH_CLIENT_ID: 'Ov23OverrideId' }),
+      'Ov23OverrideId'
+    );
+
+    let sentClientId = '';
+    const mockFetch = async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      sentClientId = body.client_id;
+      return {
+        ok: true,
+        json: async () => ({
+          device_code: 'dev-code-1',
+          user_code: 'ABCD-1234',
+          verification_uri: 'https://github.com/login/device',
+          expires_in: 900,
+          interval: 5,
+        }),
+      };
+    };
+
+    const res = await startOAuthDeviceFlow({ env: {}, fetchImpl: mockFetch as any });
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(sentClientId, 'Ov23liIZFb3mNjqbCqyc');
+    assert.strictEqual(res.user_code, 'ABCD-1234');
+  });
+
+  it('keeps sessions in memory by default and clears session cleanly on disconnect', () => {
+    saveBackendSession({ token: 'gho_session_only_token_123', authMethod: 'oauth', user: { login: 'octocat' } });
+    assert.strictEqual(getActiveGitHubToken(), 'gho_session_only_token_123');
+    clearBackendSession();
+    assert.strictEqual(getActiveGitHubToken(), '');
   });
 
   it('handles OAuth Device Flow pending, slow_down, cancellation, expiration, and success without leaking token', async () => {
