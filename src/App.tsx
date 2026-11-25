@@ -6,6 +6,7 @@ import { Sidebar } from './components/layout/Sidebar';
 import { StatusBar } from './components/layout/StatusBar';
 import { WorkspaceModeTabs } from './components/layout/WorkspaceModeTabs';
 import { CodeEditor } from './components/editor/CodeEditor';
+import { PanelErrorBoundary } from './components/common/PanelErrorBoundary';
 
 const CIASimulator = lazy(() =>
   import('./components/change-impact/CIASimulator').then(m => ({ default: m.CIASimulator }))
@@ -44,28 +45,44 @@ export const AppContent: React.FC = () => {
 
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <ActivityBar />
-        <Sidebar />
+        <PanelErrorBoundary panelName="Sidebar">
+          <Sidebar />
+        </PanelErrorBoundary>
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-ide-bg">
           <WorkspaceModeTabs />
           <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-            <Suspense fallback={<div className="flex flex-1 items-center justify-center text-xs text-ide-text-muted">Loading panel...</div>}>
-              {activeView === 'editor' && <CodeEditor />}
-              {activeView === 'cia' && <CIASimulator />}
-              {activeView === 'mcp' && <MCPDashboard />}
-              {activeView === 'graph' && <KnowledgeGraphCanvas />}
-              {activeView === 'validation' && <ValidationRunner />}
-              {!['editor', 'cia', 'mcp', 'graph', 'validation'].includes(activeView) && <CodeEditor />}
-            </Suspense>
+            <PanelErrorBoundary panelName="Workspace View">
+              <Suspense fallback={<div className="flex flex-1 items-center justify-center text-xs text-ide-text-muted">Loading panel...</div>}>
+                {activeView === 'editor' && <CodeEditor />}
+                {activeView === 'cia' && <CIASimulator />}
+                {activeView === 'mcp' && <MCPDashboard />}
+                {activeView === 'graph' && <KnowledgeGraphCanvas />}
+                {activeView === 'validation' && <ValidationRunner />}
+                {!['editor', 'cia', 'mcp', 'graph', 'validation'].includes(activeView) && <CodeEditor />}
+              </Suspense>
+            </PanelErrorBoundary>
           </div>
           <Suspense fallback={null}>
-            {isProblemsPanelOpen && <ProblemsPanel />}
-            {isTerminalOpen && <TerminalPanel />}
+            {isProblemsPanelOpen && (
+              <PanelErrorBoundary panelName="Problems">
+                <ProblemsPanel />
+              </PanelErrorBoundary>
+            )}
+            {isTerminalOpen && (
+              <PanelErrorBoundary panelName="Terminal">
+                <TerminalPanel />
+              </PanelErrorBoundary>
+            )}
           </Suspense>
         </main>
 
         <Suspense fallback={null}>
-          {isCopilotOpen && <ModelGatewayChat />}
+          {isCopilotOpen && (
+            <PanelErrorBoundary panelName="AI Assistant">
+              <ModelGatewayChat />
+            </PanelErrorBoundary>
+          )}
         </Suspense>
       </div>
 

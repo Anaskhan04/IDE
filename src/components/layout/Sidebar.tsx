@@ -149,11 +149,6 @@ export const Sidebar: React.FC = () => {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // If sidebar is collapsed, render nothing
-  if (!isSidebarVisible) {
-    return null;
-  }
-
   // Reset collapsed folders when workspace files or project change so the new folder structure is cleanly visible
   useEffect(() => {
     setCollapsedFolders(new Set());
@@ -161,6 +156,7 @@ export const Sidebar: React.FC = () => {
 
   // Reveal file in Explorer: expand parent folders and scroll into view
   useEffect(() => {
+    if (!isSidebarVisible) return;
     const targetId = revealedExplorerFileId || activeFileId;
     if (!targetId) return;
     const targetFile = files.find((f) => f.id === targetId);
@@ -190,7 +186,7 @@ export const Sidebar: React.FC = () => {
     }, 60);
 
     return () => clearTimeout(timer);
-  }, [revealedExplorerFileId, activeFileId, files]);
+  }, [isSidebarVisible, revealedExplorerFileId, activeFileId, files]);
 
   // Build tree for explorer
   const fileTree: FileTreeNode = { name: 'root', fullPath: '', isFolder: true, children: {} };
@@ -577,6 +573,10 @@ export const Sidebar: React.FC = () => {
       setIsCreateBranchOpen(false);
     }
   };
+
+  if (!isSidebarVisible) {
+    return null;
+  }
 
   return (
     <>
