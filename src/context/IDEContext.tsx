@@ -236,6 +236,9 @@ interface IDEContextType {
   remoteUrl: string;
   githubLinkedRepo: { owner: string; repo: string } | null;
   gitBranches: string[];
+  gitAhead: number;
+  gitBehind: number;
+  fetchFromRemote: () => Promise<boolean>;
   loginWithGitHubToken: (token: string) => Promise<boolean>;
   logoutGitHub: () => void;
   fetchGitHubRepos: () => Promise<void>;
@@ -480,6 +483,8 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [remoteUrl, setRemoteUrl] = useState<string>('');
   const [githubLinkedRepo, setGithubLinkedRepo] = useState<{ owner: string; repo: string } | null>(null);
   const [gitBranches, setGitBranches] = useState<string[]>([]);
+  const [gitAhead, setGitAhead] = useState<number>(0);
+  const [gitBehind, setGitBehind] = useState<number>(0);
   const [masterPrompt, setMasterPrompt] = useState<MasterPromptData>({
     ...INITIAL_MASTER_PROMPT,
     projectName: 'workspace',
@@ -971,6 +976,8 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setGithubLinkedRepo(statusRes.githubRepo || null);
           setStagedFiles(statusRes.stagedFiles || []);
           setUnstagedFiles(statusRes.unstagedFiles || []);
+          setGitAhead(statusRes.ahead || 0);
+          setGitBehind(statusRes.behind || 0);
 
           // Sync stagedFileIds for in-memory files matching staged paths
           const stagedPaths = (statusRes.stagedFiles || []).map(f => f.path);
@@ -1278,17 +1285,22 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!res.success && res.error) {
         setGitError(res.error);
       }
-      // Re-read file content from disk to update editor
+      // Re-read file content from disk or remove if untracked file was deleted
       if (file) {
-        const diffRes = await gitService.getDiff(repoRoot, targetPath);
-        if (diffRes.success && diffRes.currentContent !== undefined) {
-          setFiles(prev => prev.map(f => f.id === file.id ? {
-            ...f,
-            content: diffRes.currentContent!,
-            savedContent: diffRes.currentContent!,
-            isDirty: false,
-            isModified: false
-          } : f));
+        if (res.deleted) {
+          setFiles(prev => prev.filter(f => f.id !== file.id));
+          closeFile(file.id);
+        } else {
+          const diffRes = await gitService.getDiff(repoRoot, targetPath);
+          if (diffRes.success && diffRes.currentContent !== undefined) {
+            setFiles(prev => prev.map(f => f.id === file.id ? {
+              ...f,
+              content: diffRes.currentContent!,
+              savedContent: diffRes.currentContent!,
+              isDirty: false,
+              isModified: false
+            } : f));
+          }
         }
       }
       await refreshGitStatus();
@@ -1963,6 +1975,28 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return true;
   };
 
+  const fetchFromRemote = async (): Promise<boolean> => {
+    if (!repoRoot) {
+      setGitError('No active Git repository on disk.');
+      return false;
+    }
+    setGitLoading(true);
+    setGitError(null);
+    setGitSyncMessage(null);
+    const res = await gitService.fetch(repoRoot, githubToken || undefined);
+    if (!res.success) {
+      setGitError(res.error || 'Failed to fetch from remote');
+      setGitLoading(false);
+      return false;
+    }
+    if (typeof res.ahead === 'number') setGitAhead(res.ahead);
+    if (typeof res.behind === 'number') setGitBehind(res.behind);
+    setGitSyncMessage(res.output || 'Fetched remote updates.');
+    await refreshGitStatus(repoRoot);
+    setGitLoading(false);
+    return true;
+  };
+
   const pushToGitHub = async (): Promise<boolean> => {
     if (!repoRoot) {
       setGitError('No active Git repository on disk.');
@@ -2361,6 +2395,9 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         remoteUrl,
         githubLinkedRepo,
         gitBranches,
+        gitAhead,
+        gitBehind,
+        fetchFromRemote,
         loginWithGitHubToken,
         logoutGitHub,
         fetchGitHubRepos,

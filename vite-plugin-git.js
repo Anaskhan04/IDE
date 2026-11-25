@@ -3,39 +3,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { executeTerminalCommand, isAuthorizedLocalRequest } from './vite-terminal-utils.js';
-
-/**
- * Execute a git command safely with explicit argument arrays (preventing shell injection).
- */
-function runGit(args, cwd, token) {
-  return new Promise((resolve) => {
-    let finalArgs = args;
-    if (token) {
-      const basicAuth = Buffer.from(`x-access-token:${token}`).toString('base64');
-      finalArgs = ['-c', `http.extraheader=AUTHORIZATION: basic ${basicAuth}`, ...args];
-    }
-
-    execFile(
-      'git',
-      finalArgs,
-      {
-        cwd,
-        maxBuffer: 10 * 1024 * 1024,
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: '0',
-        },
-      },
-      (err, stdout, stderr) => {
-        resolve({
-          stdout: stdout ? stdout.toString() : '',
-          stderr: stderr ? stderr.toString() : '',
-          code: err ? (err.code || 1) : 0,
-        });
-      }
-    );
-  });
-}
+import {
+  checkoutBranchSafe,
+  discardFileChanges,
+  fetchFromRemote,
+  formatGitError,
+  getAheadBehindCounts,
+  parseGitStatusPorcelain,
+  runGit,
+} from './vite-git-utils.js';
 
 /**
  * Resolve a relative file/folder path safely inside a workspace root.
@@ -349,42 +325,8 @@ export function gitApiPlugin() {
             });
           }
 
-          const stagedFiles = [];
-          const unstagedFiles = [];
-
-          const lines = statusResult.stdout.split('\n');
-          for (const line of lines) {
-            if (!line || line.length < 4) continue;
-            const indexStatus = line[0];
-            const worktreeStatus = line[1];
-            let filePath = line.substring(3).trim();
-            if (filePath.includes(' -> ')) {
-              filePath = filePath.split(' -> ')[1].trim();
-            }
-            if (filePath.startsWith('"') && filePath.endsWith('"')) {
-              filePath = filePath.slice(1, -1);
-            }
-
-            const fileName = path.basename(filePath);
-
-            if (indexStatus !== ' ' && indexStatus !== '?' && indexStatus !== '!') {
-              stagedFiles.push({
-                path: filePath.replace(/\\/g, '/'),
-                name: fileName,
-                status: indexStatus,
-                isStaged: true,
-              });
-            }
-
-            if (worktreeStatus !== ' ' && worktreeStatus !== '!') {
-              unstagedFiles.push({
-                path: filePath.replace(/\\/g, '/'),
-                name: fileName,
-                status: worktreeStatus === '?' ? 'U' : worktreeStatus,
-                isStaged: false,
-              });
-            }
-          }
+          const { stagedFiles, unstagedFiles } = parseGitStatusPorcelain(statusResult.stdout);
+          const { ahead, behind, hasUpstream } = await getAheadBehindCounts(repoRoot);
 
           return sendJson(res, 200, {
             success: true,
@@ -393,6 +335,9 @@ export function gitApiPlugin() {
             branch,
             remoteUrl,
             githubRepo: parseGitHubRemote(remoteUrl),
+            ahead,
+            behind,
+            hasUpstream,
             stagedFiles,
             unstagedFiles,
           });
@@ -505,22 +450,8 @@ export function gitApiPlugin() {
             return sendJson(res, 400, { error: 'Missing repository directory or file path' });
           }
 
-          let discardResult = await runGit(['restore', '--', filePath], repoRoot);
-          if (discardResult.code !== 0) {
-            discardResult = await runGit(['checkout', '--', filePath], repoRoot);
-          }
-          if (discardResult.code !== 0) {
-            discardResult = await runGit(['clean', '-f', '--', filePath], repoRoot);
-          }
-
-          if (discardResult.code !== 0) {
-            return sendJson(res, 200, {
-              success: false,
-              error: discardResult.stderr || 'Failed to discard changes',
-            });
-          }
-
-          return sendJson(res, 200, { success: true });
+          const discardResult = await discardFileChanges(repoRoot, filePath);
+          return sendJson(res, 200, discardResult);
         }
 
         if (url === '/api/git/commit') {
@@ -646,15 +577,17 @@ export function gitApiPlugin() {
           if (!repoRoot || !branch) {
             return sendJson(res, 400, { error: 'Repository directory and branch name required' });
           }
-          const args = create ? ['checkout', '-b', branch] : ['checkout', branch];
-          const checkoutRes = await runGit(args, repoRoot);
-          if (checkoutRes.code !== 0) {
-            return sendJson(res, 200, {
-              success: false,
-              error: checkoutRes.stderr || 'Failed to switch branch',
-            });
+          const checkoutRes = await checkoutBranchSafe(repoRoot, branch, create);
+          return sendJson(res, 200, checkoutRes);
+        }
+
+        if (url === '/api/git/fetch') {
+          const repoRoot = body.repoRoot;
+          if (!repoRoot || !fs.existsSync(repoRoot)) {
+            return sendJson(res, 400, { error: 'Invalid repository directory' });
           }
-          return sendJson(res, 200, { success: true, branch });
+          const fetchRes = await fetchFromRemote(repoRoot, body.token);
+          return sendJson(res, 200, fetchRes);
         }
 
         if (url === '/api/git/push') {
@@ -671,7 +604,7 @@ export function gitApiPlugin() {
           if (pushRes.code !== 0) {
             return sendJson(res, 200, {
               success: false,
-              error: pushRes.stderr || pushRes.stdout || 'Failed to push to remote',
+              error: formatGitError(pushRes.stderr || pushRes.stdout, 'Failed to push to remote'),
             });
           }
 
@@ -695,7 +628,7 @@ export function gitApiPlugin() {
           if (pullRes.code !== 0) {
             return sendJson(res, 200, {
               success: false,
-              error: pullRes.stderr || pullRes.stdout || 'Failed to pull from remote',
+              error: formatGitError(pullRes.stderr || pullRes.stdout, 'Failed to pull from remote'),
             });
           }
 

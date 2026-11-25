@@ -19,6 +19,9 @@ interface GitStatusResult {
   branch?: string;
   remoteUrl?: string;
   githubRepo?: { owner: string; repo: string } | null;
+  ahead?: number;
+  behind?: number;
+  hasUpstream?: boolean;
   stagedFiles: GitFileItem[];
   unstagedFiles: GitFileItem[];
   error?: string;
@@ -152,11 +155,19 @@ export const gitService = {
   /**
    * Discard changes in a file (restore from index/HEAD).
    */
-  async discard(repoRoot: string, filePath: string): Promise<SimpleGitResult> {
+  async discard(repoRoot: string, filePath: string): Promise<SimpleGitResult & { deleted?: boolean }> {
     try {
-      return await postApi<SimpleGitResult>('/api/git/discard', { repoRoot, filePath });
+      return await postApi<SimpleGitResult & { deleted?: boolean }>('/api/git/discard', { repoRoot, filePath });
     } catch (err: any) {
       return { success: false, error: err?.message || 'Failed to discard changes' };
+    }
+  },
+
+  async fetch(repoRoot: string, token?: string): Promise<SimpleGitResult & { ahead?: number; behind?: number; output?: string }> {
+    try {
+      return await postApi('/api/git/fetch', { repoRoot, token });
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to fetch from remote' };
     }
   },
 

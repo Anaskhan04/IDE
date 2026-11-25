@@ -22,7 +22,9 @@ export const StatusBar: React.FC = () => {
     isTerminalOpen,
     githubUser,
     setIsGitHubModalOpen,
-    pushToGitHub,
+    fetchFromRemote,
+    gitAhead,
+    gitBehind,
     gitLoading,
   } = useIDE();
   const activeFile = files.find((file) => file.id === activeFileId);
@@ -76,7 +78,7 @@ export const StatusBar: React.FC = () => {
           type="button"
           onClick={() => {
             if (isGitRepo) {
-              pushToGitHub();
+              fetchFromRemote();
             } else {
               setSidebarView('git');
               setIsSidebarVisible(true);
@@ -84,10 +86,16 @@ export const StatusBar: React.FC = () => {
           }}
           disabled={gitLoading}
           className="flex items-center gap-1.5 whitespace-nowrap text-ide-subtle hover:text-ide-text disabled:opacity-50"
-          title={isGitRepo ? 'Push / Sync changes with GitHub' : 'Open Source Control'}
+          title={isGitRepo ? 'Fetch latest from remote' : 'Open Source Control'}
         >
           <RefreshCw className={`h-3 w-3 ${gitLoading ? 'animate-spin text-ide-focus' : ''}`} aria-hidden="true" />
-          <span>{isGitRepo ? 'Push' : 'Sync'}</span>
+          <span>
+            {isGitRepo
+              ? gitAhead > 0 || gitBehind > 0
+                ? `↓${gitBehind} ↑${gitAhead}`
+                : 'Fetch'
+              : 'Source Control'}
+          </span>
         </button>
         <button
           type="button"
