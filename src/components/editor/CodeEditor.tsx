@@ -92,8 +92,14 @@ export const CodeEditor: React.FC = () => {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
+  const diagOverlayRef = useRef<HTMLDivElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
+  const [hoveredDiag, setHoveredDiag] = useState<{
+    diags: WorkspaceDiagnostic[];
+    x: number;
+    y: number;
+  } | null>(null);
 
   const diagnosticsByLine = useMemo(() => {
     const map = new Map<number, WorkspaceDiagnostic[]>();
@@ -164,6 +170,49 @@ export const CodeEditor: React.FC = () => {
     if (lineNumbersRef.current) {
       lineNumbersRef.current.scrollTop = event.currentTarget.scrollTop;
     }
+    if (diagOverlayRef.current) {
+      diagOverlayRef.current.scrollTop = event.currentTarget.scrollTop;
+      diagOverlayRef.current.scrollLeft = event.currentTarget.scrollLeft;
+    }
+    if (hoveredDiag) {
+      setHoveredDiag(null);
+    }
+  };
+
+  const handleEditorMouseMove = (event: React.MouseEvent<HTMLTextAreaElement>) => {
+    if (diagnosticsByLine.size === 0) {
+      if (hoveredDiag) setHoveredDiag(null);
+      return;
+    }
+    const ta = event.currentTarget;
+    const rect = ta.getBoundingClientRect();
+    const lineHeight = editorSettings.fontSize * 1.6;
+    const padding = 8; // p-2 = 8px
+    const relY = event.clientY - rect.top + ta.scrollTop - padding;
+    const hoverLine = Math.floor(relY / lineHeight) + 1;
+    const lineDiags = diagnosticsByLine.get(hoverLine);
+
+    if (!lineDiags || lineDiags.length === 0) {
+      if (hoveredDiag) setHoveredDiag(null);
+      return;
+    }
+
+    const approxCharWidth = editorSettings.fontSize * 0.602;
+    const relX = event.clientX - rect.left + ta.scrollLeft - padding;
+    const hoverCol = Math.max(1, Math.floor(relX / approxCharWidth) + 1);
+
+    const matching = lineDiags.filter((d) => {
+      const start = d.column;
+      const end = d.endLine === hoverLine && d.endColumn ? d.endColumn : start + 12;
+      return hoverCol >= start - 1 && hoverCol <= end + 1;
+    });
+
+    const targetDiags = matching.length > 0 ? matching : lineDiags;
+    setHoveredDiag({
+      diags: targetDiags,
+      x: Math.min(event.clientX - rect.left + 12, Math.max(16, rect.width - 340)),
+      y: Math.max(8, event.clientY - rect.top + 18),
+    });
   };
 
   useEffect(() => {
@@ -898,30 +947,124 @@ export const CodeEditor: React.FC = () => {
           </div>
         )}
 
-        <textarea
-          ref={textareaRef}
-          value={activeFile.content}
-          onChange={(event) => {
-            updateFileContent(activeFile.id, event.target.value);
-            updateCursorInfo(event.target);
-          }}
-          onKeyDown={handleEditorKeyDown}
-          onScroll={handleScroll}
-          onSelect={(event) => updateCursorInfo(event.currentTarget)}
-          onKeyUp={(event) => updateCursorInfo(event.currentTarget)}
-          onClick={(event) => updateCursorInfo(event.currentTarget)}
-          spellCheck={false}
-          wrap={editorSettings.wordWrap ? 'on' : 'off'}
-          aria-label={`Editing ${activeFile.path}`}
-          className={`h-full min-h-0 min-w-0 flex-1 resize-none overflow-auto border-0 bg-transparent p-2 pb-32 font-mono text-ide-text outline-none selection:bg-ide-focus/30 ${
-            editorSettings.wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'
-          }`}
-          style={{
-            tabSize: editorSettings.tabSize,
-            fontSize: `${editorSettings.fontSize}px`,
-            lineHeight: `${editorSettings.fontSize * 1.6}px`,
-          }}
-        />
+        <div className="relative h-full min-h-0 min-w-0 flex-1 overflow-hidden">
+          {/* Diagnostic squiggly underline overlay */}
+          <div
+            ref={diagOverlayRef}
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-0 overflow-hidden p-2 pb-32 font-mono text-transparent select-none ${
+              editorSettings.wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'
+            }`}
+            style={{
+              tabSize: editorSettings.tabSize,
+              fontSize: `${editorSettings.fontSize}px`,
+              lineHeight: `${editorSettings.fontSize * 1.6}px`,
+            }}
+          >
+            {lines.map((lineText, idx) => {
+              const lineNum = idx + 1;
+              const lineDiags = diagnosticsByLine.get(lineNum);
+              if (!lineDiags || lineDiags.length === 0) {
+                return (
+                  <div key={idx} style={{ minHeight: `${editorSettings.fontSize * 1.6}px` }}>
+                    {lineText || ' '}
+                  </div>
+                );
+              }
+
+              // Use highest-severity diagnostic on this line for squiggly span
+              const primary =
+                lineDiags.find((d) => d.severity === 'error') ||
+                lineDiags.find((d) => d.severity === 'warning') ||
+                lineDiags[0];
+              const startIdx = Math.min(lineText.length, Math.max(0, primary.column - 1));
+              let endIdx =
+                primary.endLine === lineNum && primary.endColumn
+                  ? Math.min(lineText.length, Math.max(startIdx + 1, primary.endColumn - 1))
+                  : startIdx;
+              if (endIdx <= startIdx) {
+                const rest = lineText.slice(startIdx);
+                const tokMatch = rest.match(/^\S+/);
+                endIdx = Math.min(lineText.length, startIdx + Math.max(1, tokMatch ? tokMatch[0].length : 1));
+              }
+
+              const decoClass =
+                primary.severity === 'error'
+                  ? 'decoration-ide-rose'
+                  : primary.severity === 'warning'
+                    ? 'decoration-ide-amber'
+                    : 'decoration-ide-cyan';
+
+              return (
+                <div key={idx} style={{ minHeight: `${editorSettings.fontSize * 1.6}px` }}>
+                  <span>{lineText.slice(0, startIdx)}</span>
+                  <span className={`underline decoration-wavy decoration-2 underline-offset-2 ${decoClass}`}>
+                    {lineText.slice(startIdx, endIdx) || ' '}
+                  </span>
+                  <span>{lineText.slice(endIdx)}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          <textarea
+            ref={textareaRef}
+            value={activeFile.content}
+            onChange={(event) => {
+              updateFileContent(activeFile.id, event.target.value);
+              updateCursorInfo(event.target);
+            }}
+            onKeyDown={handleEditorKeyDown}
+            onScroll={handleScroll}
+            onMouseMove={handleEditorMouseMove}
+            onMouseLeave={() => setHoveredDiag(null)}
+            onSelect={(event) => updateCursorInfo(event.currentTarget)}
+            onKeyUp={(event) => updateCursorInfo(event.currentTarget)}
+            onClick={(event) => updateCursorInfo(event.currentTarget)}
+            spellCheck={false}
+            wrap={editorSettings.wordWrap ? 'on' : 'off'}
+            aria-label={`Editing ${activeFile.path}`}
+            className={`relative z-10 h-full w-full resize-none overflow-auto border-0 bg-transparent p-2 pb-32 font-mono text-ide-text outline-none selection:bg-ide-focus/30 ${
+              editorSettings.wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'
+            }`}
+            style={{
+              tabSize: editorSettings.tabSize,
+              fontSize: `${editorSettings.fontSize}px`,
+              lineHeight: `${editorSettings.fontSize * 1.6}px`,
+            }}
+          />
+
+          {hoveredDiag && hoveredDiag.diags.length > 0 && (
+            <div
+              role="tooltip"
+              style={{ left: `${hoveredDiag.x}px`, top: `${hoveredDiag.y}px` }}
+              className="pointer-events-none absolute z-30 max-w-sm rounded-ide-panel border border-ide-border-strong bg-ide-panel p-2.5 shadow-lg space-y-1.5"
+            >
+              {hoveredDiag.diags.map((d) => (
+                <div key={d.id} className="text-[11px] leading-snug">
+                  <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                    <span
+                      className={`font-semibold uppercase ${
+                        d.severity === 'error'
+                          ? 'text-ide-rose'
+                          : d.severity === 'warning'
+                            ? 'text-ide-amber'
+                            : 'text-ide-cyan'
+                      }`}
+                    >
+                      {d.severity}
+                    </span>
+                    {d.code && <span className="text-ide-subtle">{d.code}</span>}
+                    <span className="ml-auto text-ide-subtle">
+                      Ln {d.line}, Col {d.column}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 font-sans text-ide-strong">{d.message}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {editorSettings.showMinimap && lines.length > 8 && (
           <div className="hidden h-full min-h-0 w-16 shrink-0 overflow-hidden border-l border-ide-border bg-ide-shell/70 p-1.5 select-none lg:block" data-purpose="code-minimap" aria-hidden="true">
