@@ -26,7 +26,14 @@ import {
 } from '../types/ide';
 import { gitService } from '../utils/gitService';
 import { githubService } from '../utils/githubService';
-import { buildWorkspaceSystemPrompt, parseGeneratedFilesFromResponse, sendModelRequest } from '../utils/aiService';
+import {
+  ContextBundle,
+  getBackendAiKeyStatuses,
+  parseGeneratedFilesFromResponse,
+  saveBackendAiKey,
+  selectRelevantContext,
+  sendModelRequest,
+} from '../utils/aiService';
 
 import { INITIAL_FILES } from '../data/mockProject';
 import { INITIAL_GRAPH_NODES, INITIAL_GRAPH_EDGES, DEFAULT_CIA_RESULT, SAMPLE_CYPHER_QUERIES } from '../data/mockGraph';
@@ -96,9 +103,18 @@ interface IDEContextType {
   customModels: AIModel[];
   addCustomModel: (model: Omit<AIModel, 'id' | 'color' | 'isCustom'> & { apiKey?: string }, selectAfter?: boolean) => AIModel;
   removeCustomModel: (modelId: string) => void;
-  apiKeys: Record<string, string>;
-  setApiKey: (providerKey: string, key: string) => void;
+  configuredProviders: Record<string, boolean>;
+  providerStatuses: Record<string, string>;
+  refreshAiKeyStatuses: () => Promise<void>;
+  setApiKey: (providerKey: string, key: string) => Promise<void>;
   isGeneratingAI: boolean;
+  stopAIGeneration: () => void;
+  retryLastChatMessage: () => Promise<void>;
+  attachedContextPaths: string[];
+  setAttachedContextPaths: React.Dispatch<React.SetStateAction<string[]>>;
+  selectedEditorCode: string;
+  setSelectedEditorCode: (code: string) => void;
+  lastContextBundle: ContextBundle | null;
   applyGeneratedFiles: (genFiles: AIGeneratedFile[]) => Promise<number>;
   masterPrompt: MasterPromptData;
   setMasterPrompt: React.Dispatch<React.SetStateAction<MasterPromptData>>;
@@ -374,31 +390,32 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  const [apiKeys, setApiKeysState] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem('intellicode_api_keys');
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
+  const [configuredProviders, setConfiguredProviders] = useState<Record<string, boolean>>({});
+  const [providerStatuses, setProviderStatuses] = useState<Record<string, string>>({});
+  const [attachedContextPaths, setAttachedContextPaths] = useState<string[]>([]);
+  const [selectedEditorCode, setSelectedEditorCode] = useState<string>('');
+  const [lastContextBundle, setLastContextBundle] = useState<ContextBundle | null>(null);
+  const aiAbortRef = useRef<AbortController | null>(null);
 
-  const setApiKey = (providerKey: string, key: string) => {
-    setApiKeysState((prev) => {
-      const next = { ...prev };
-      const trimmed = key.trim();
-      if (trimmed) {
-        next[providerKey] = trimmed;
-      } else {
-        delete next[providerKey];
-      }
-      try {
-        localStorage.setItem('intellicode_api_keys', JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
+  const refreshAiKeyStatuses = async () => {
+    try {
+      localStorage.removeItem('intellicode_api_keys');
+    } catch {
+      // ignore
+    }
+    const res = await getBackendAiKeyStatuses();
+    setConfiguredProviders(res.configuredProviders || {});
+    setProviderStatuses(res.statuses || {});
+  };
+
+  useEffect(() => {
+    refreshAiKeyStatuses();
+  }, []);
+
+  const setApiKey = async (providerKey: string, key: string) => {
+    const res = await saveBackendAiKey(providerKey, key.trim());
+    setConfiguredProviders(res.configuredProviders || {});
+    setProviderStatuses(res.statuses || {});
   };
 
   const addCustomModel = (
@@ -565,6 +582,15 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setWorkspacePath(null);
     setRepoRoot(null);
     setTerminalCwd('');
+    setAttachedContextPaths([]);
+    setSelectedEditorCode('');
+    setLastContextBundle(null);
+    setGitError(null);
+    setGitSyncMessage(null);
+    setGitAhead(0);
+    setGitBehind(0);
+    setRemoteUrl('');
+    setGithubLinkedRepo(null);
     clearStoredDirectoryHandle();
     saveWorkspaceMeta({
       projectId: id,
@@ -588,8 +614,8 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ...INITIAL_MASTER_PROMPT,
         projectName: 'DeusData / codebase-memory-mcp',
         version: 'v0.24.1 (Pure C)',
-        astVersion: 'CBM-AST-TREE-SITTER',
-        requirements: 'Native, extreme-performance code intelligence engine with persistent tree-sitter AST knowledge graph, Cypher query engine, BFS path tracer, and 99% token reduction for AI coding agents.'
+        astVersion: 'AST-INDEXER',
+        requirements: 'Code intelligence demo workspace with TypeScript/regex AST knowledge graph, pattern query engine, and BFS call-path tracer.'
       });
       setCypherResult({
         query: 'MATCH (caller)-[:CALLS]->(f:Function) WHERE f.name = "cbm_cypher_execute" RETURN caller.label, caller.type, caller.file',
@@ -2223,6 +2249,120 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return appliedCount;
   };
 
+  const stopAIGeneration = () => {
+    if (aiAbortRef.current) {
+      aiAbortRef.current.abort();
+      aiAbortRef.current = null;
+    }
+    setIsGeneratingAI(false);
+  };
+
+  const runPromptAgainstModel = async (historySnapshot: ChatMessage[]) => {
+    const hasBackendKey = Boolean(configuredProviders[activeModel.providerKey]);
+    if (activeModel.requiresApiKey !== false && !hasBackendKey) {
+      setChatMessages(prev => [
+        ...prev,
+        {
+          id: 'msg-key-' + (Date.now() + 1),
+          sender: 'assistant',
+          model: activeModel.name,
+          content: `API key required for **${activeModel.name}** (${activeModel.provider}). Add your API key below or in the Model Gateway to run prompts.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isError: true,
+          needsApiKey: {
+            providerKey: activeModel.providerKey,
+            providerName: activeModel.provider,
+          },
+        },
+      ]);
+      return;
+    }
+
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    setIsGeneratingAI(true);
+    const streamMsgId = 'msg-' + (Date.now() + 1);
+
+    try {
+      const activeFile = files.find(f => f.id === activeFileId);
+      const bundle = selectRelevantContext({
+        projectName: masterPrompt.projectName || 'workspace',
+        files,
+        activeFile,
+        selectedCode: selectedEditorCode,
+        attachedPaths: attachedContextPaths,
+        graphNodes,
+        graphEdges,
+        diagnostics,
+        ciaResult,
+      });
+      setLastContextBundle(bundle);
+
+      setChatMessages(prev => [
+        ...prev,
+        {
+          id: streamMsgId,
+          sender: 'assistant',
+          model: activeModel.name,
+          content: '',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          contextContinuity: true,
+        },
+      ]);
+
+      const result = await sendModelRequest({
+        model: activeModel,
+        messages: historySnapshot,
+        systemPrompt: bundle.systemPrompt,
+        signal: controller.signal,
+        onDelta: (partial) => {
+          setChatMessages(prev =>
+            prev.map(m => (m.id === streamMsgId ? { ...m, content: partial } : m))
+          );
+        },
+      });
+
+      await refreshAiKeyStatuses();
+
+      if (!result.success || !result.content) {
+        setChatMessages(prev =>
+          prev.map(m =>
+            m.id === streamMsgId
+              ? {
+                  ...m,
+                  content: result.aborted
+                    ? 'Generation stopped by user.'
+                    : `Error from ${activeModel.name}: ${result.error || 'No response received.'}`,
+                  isError: !result.aborted,
+                }
+              : m
+          )
+        );
+        return;
+      }
+
+      const generatedFiles = parseGeneratedFilesFromResponse(result.content);
+      const usedTokens = result.usage?.totalTokens || 0;
+
+      setChatMessages(prev =>
+        prev.map(m =>
+          m.id === streamMsgId
+            ? {
+                ...m,
+                content: result.content!,
+                tokensUsed: usedTokens > 0 ? usedTokens : undefined,
+                contextContinuity: true,
+                generatedFiles: generatedFiles.length > 0 ? generatedFiles : undefined,
+              }
+            : m
+        )
+      );
+    } finally {
+      aiAbortRef.current = null;
+      setIsGeneratingAI(false);
+    }
+  };
+
   const sendChatMessage = async (content: string) => {
     const trimmed = content.trim();
     if (!trimmed) return;
@@ -2237,85 +2377,21 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const historySnapshot = [...chatMessages, userMsg];
     setChatMessages(historySnapshot);
 
-    const isSystemEvent = trimmed.startsWith('[SYSTEM EVENT:');
-    if (isSystemEvent) {
+    if (trimmed.startsWith('[SYSTEM EVENT:')) {
       return;
     }
 
-    const activeKey = apiKeys[activeModel.providerKey] || '';
-    if (activeModel.requiresApiKey !== false && !activeKey) {
-      setChatMessages(prev => [
-        ...prev,
-        {
-          id: 'msg-key-' + (Date.now() + 1),
-          sender: 'assistant',
-          model: activeModel.name,
-          content: `API key required for **${activeModel.name}** (${activeModel.provider}). Add your API key below or in the Model Gateway to run prompts and build projects with this model.`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isError: true,
-          needsApiKey: {
-            providerKey: activeModel.providerKey,
-            providerName: activeModel.provider,
-          },
-        },
-      ]);
-      return;
-    }
+    await runPromptAgainstModel(historySnapshot);
+  };
 
-    setIsGeneratingAI(true);
-    try {
-      const activeFile = files.find(f => f.id === activeFileId);
-      const systemPrompt = buildWorkspaceSystemPrompt({
-        projectName: masterPrompt.projectName || 'workspace',
-        files,
-        activeFile,
-        diagnostics,
-      });
-
-      const result = await sendModelRequest({
-        model: activeModel,
-        apiKey: activeKey,
-        messages: historySnapshot,
-        systemPrompt,
-      });
-
-      if (!result.success || !result.content) {
-        setChatMessages(prev => [
-          ...prev,
-          {
-            id: 'msg-err-' + (Date.now() + 1),
-            sender: 'assistant',
-            model: activeModel.name,
-            content: `Error from ${activeModel.name}: ${result.error || 'No response received.'}`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            isError: true,
-          },
-        ]);
-        return;
-      }
-
-      const generatedFiles = parseGeneratedFilesFromResponse(result.content);
-      const usedTokens = result.usage?.totalTokens || 0;
-      if (usedTokens > 0) {
-        setTokensSaved(prev => prev + Math.max(0, 4000 - usedTokens));
-      }
-
-      setChatMessages(prev => [
-        ...prev,
-        {
-          id: 'msg-' + (Date.now() + 1),
-          sender: 'assistant',
-          model: activeModel.name,
-          content: result.content!,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          tokensUsed: usedTokens,
-          contextContinuity: true,
-          generatedFiles: generatedFiles.length > 0 ? generatedFiles : undefined,
-        },
-      ]);
-    } finally {
-      setIsGeneratingAI(false);
-    }
+  const retryLastChatMessage = async () => {
+    if (isGeneratingAI) return;
+    const lastUserIdx = [...chatMessages].reverse().findIndex(m => m.sender === 'user');
+    if (lastUserIdx === -1) return;
+    const actualIdx = chatMessages.length - 1 - lastUserIdx;
+    const snapshot = chatMessages.slice(0, actualIdx + 1);
+    setChatMessages(snapshot);
+    await runPromptAgainstModel(snapshot);
   };
 
   return (
@@ -2337,9 +2413,18 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         customModels,
         addCustomModel,
         removeCustomModel,
-        apiKeys,
+        configuredProviders,
+        providerStatuses,
+        refreshAiKeyStatuses,
         setApiKey,
         isGeneratingAI,
+        stopAIGeneration,
+        retryLastChatMessage,
+        attachedContextPaths,
+        setAttachedContextPaths,
+        selectedEditorCode,
+        setSelectedEditorCode,
+        lastContextBundle,
         applyGeneratedFiles,
         masterPrompt,
         setMasterPrompt,

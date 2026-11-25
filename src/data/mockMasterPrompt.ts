@@ -35,7 +35,7 @@ export const INITIAL_MASTER_PROMPT: MasterPromptData = {
     '100% blast radius capture for breaking API modifications.',
     'Zero credential leakage via centralized MCP sandbox.'
   ],
-  activeTokensCount: 14820,
-  tokensSavedTotal: 184500,
-  cacheHitRatio: '96.8%'
+  activeTokensCount: 0,
+  tokensSavedTotal: 0,
+  cacheHitRatio: 'Local AST'
 };

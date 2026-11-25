@@ -18,7 +18,7 @@ import { GlobalSearchModal } from '../search/GlobalSearchModal';
 export const TopNav: React.FC = () => {
   const {
     activeModel,
-    apiKeys,
+    configuredProviders,
     masterPrompt,
     isCopilotOpen,
     setIsCopilotOpen,
@@ -164,7 +164,7 @@ export const TopNav: React.FC = () => {
           >
             <span
               className={`h-1.5 w-1.5 rounded-full ${
-                activeModel.requiresApiKey === false || apiKeys[activeModel.providerKey]
+                activeModel.requiresApiKey === false || configuredProviders[activeModel.providerKey]
                   ? 'bg-ide-emerald'
                   : 'bg-ide-amber'
               }`}

@@ -43,7 +43,7 @@ export function getConfiguredOAuthClientId(env = process.env) {
   return String(env.GITHUB_OAUTH_CLIENT_ID || env.VITE_GITHUB_CLIENT_ID || '').trim();
 }
 
-export function saveBackendSession({ token, authMethod, user }, persistToDisk = true) {
+export function saveBackendSession({ token, authMethod, user }, persistToDisk = false) {
   memorySession = {
     token: String(token || ''),
     authMethod: authMethod || null,
@@ -212,7 +212,7 @@ export async function startOAuthDeviceFlow(
  * Poll GitHub OAuth Device Flow and store token strictly on backend on success.
  */
 export async function pollOAuthDeviceToken(
-  { clientId, deviceCode, env = process.env, fetchImpl = globalThis.fetch, persistToDisk = true } = {}
+  { clientId, deviceCode, env = process.env, fetchImpl = globalThis.fetch, persistToDisk = false } = {}
 ) {
   const effectiveClientId = String(clientId || getConfiguredOAuthClientId(env)).trim();
   if (!effectiveClientId || !deviceCode) {

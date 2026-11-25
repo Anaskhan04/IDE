@@ -110,7 +110,7 @@ export const Sidebar: React.FC = () => {
     switchBranch,
     githubUser,
     setIsGitHubModalOpen,
-    apiKeys,
+    configuredProviders,
     setIsModelSwitchingModalOpen,
     diffTargetFileId,
     setDiffTargetFileId,
@@ -1633,7 +1633,7 @@ export const Sidebar: React.FC = () => {
                   </div>
                   <div className="flex justify-between text-ide-muted">
                     <span>Configured AI Keys:</span>
-                    <span className="text-ide-cyan">{Object.keys(apiKeys).length} provider(s)</span>
+                    <span className="text-ide-cyan">{Object.values(configuredProviders).filter(Boolean).length} provider(s)</span>
                   </div>
                 </div>
                 <div className="flex flex-col gap-1.5 pt-1">

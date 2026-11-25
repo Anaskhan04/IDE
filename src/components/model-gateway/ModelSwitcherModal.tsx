@@ -12,7 +12,10 @@ import {
   X,
 } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
-import { fetchAvailableProviderModels, sendModelRequest } from '../../utils/aiService';
+import {
+  fetchAvailableProviderModels,
+  testProviderConnection,
+} from '../../utils/aiService';
 import type { AIModel, AIProviderFormat } from '../../types/ide';
 
 const PROVIDER_PRESETS: {
@@ -24,52 +27,52 @@ const PROVIDER_PRESETS: {
   exampleModel: string;
   requiresApiKey: boolean;
 }[] = [
-  {
-    label: 'Google Gemini',
-    provider: 'Google',
-    providerKey: 'google',
-    apiFormat: 'gemini',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    exampleModel: 'gemini-2.5-flash',
-    requiresApiKey: true,
-  },
-  {
-    label: 'OpenRouter',
-    provider: 'OpenRouter',
-    providerKey: 'openrouter',
-    apiFormat: 'openai',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    exampleModel: 'anthropic/claude-3.5-sonnet',
-    requiresApiKey: true,
-  },
-  {
-    label: 'Groq',
-    provider: 'Groq',
-    providerKey: 'groq',
-    apiFormat: 'openai',
-    baseUrl: 'https://api.groq.com/openai/v1',
-    exampleModel: 'llama-3.3-70b-versatile',
-    requiresApiKey: true,
-  },
-  {
-    label: 'Ollama (Local)',
-    provider: 'Ollama',
-    providerKey: 'ollama',
-    apiFormat: 'openai',
-    baseUrl: 'http://localhost:11434/v1',
-    exampleModel: 'qwen2.5-coder:7b',
-    requiresApiKey: false,
-  },
-  {
-    label: 'Custom OpenAI-Compatible',
-    provider: 'Custom Provider',
-    providerKey: '',
-    apiFormat: 'openai',
-    baseUrl: 'https://api.example.com/v1',
-    exampleModel: 'my-model-id',
-    requiresApiKey: true,
-  },
-];
+    {
+      label: 'Google Gemini',
+      provider: 'Google',
+      providerKey: 'google',
+      apiFormat: 'gemini',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      exampleModel: 'gemini-2.5-flash',
+      requiresApiKey: true,
+    },
+    {
+      label: 'OpenRouter',
+      provider: 'OpenRouter',
+      providerKey: 'openrouter',
+      apiFormat: 'openai',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      exampleModel: 'anthropic/claude-3.5-sonnet',
+      requiresApiKey: true,
+    },
+    {
+      label: 'Groq',
+      provider: 'Groq',
+      providerKey: 'groq',
+      apiFormat: 'openai',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      exampleModel: 'llama-3.3-70b-versatile',
+      requiresApiKey: true,
+    },
+    {
+      label: 'Ollama (Local)',
+      provider: 'Ollama',
+      providerKey: 'ollama',
+      apiFormat: 'openai',
+      baseUrl: 'http://localhost:11434/v1',
+      exampleModel: 'qwen2.5-coder:7b',
+      requiresApiKey: false,
+    },
+    {
+      label: 'Custom OpenAI-Compatible',
+      provider: 'Custom Provider',
+      providerKey: '',
+      apiFormat: 'openai',
+      baseUrl: 'https://api.example.com/v1',
+      exampleModel: 'my-model-id',
+      requiresApiKey: true,
+    },
+  ];
 
 export const ModelSwitcherModal: React.FC = () => {
   const {
@@ -80,7 +83,9 @@ export const ModelSwitcherModal: React.FC = () => {
     allModels,
     addCustomModel,
     removeCustomModel,
-    apiKeys,
+    configuredProviders,
+    providerStatuses,
+    refreshAiKeyStatuses,
     setApiKey,
     sendChatMessage,
     masterPrompt,
@@ -88,7 +93,7 @@ export const ModelSwitcherModal: React.FC = () => {
 
   const [tab, setTab] = useState<'models' | 'custom'>('models');
   const [selectedKeyProvider, setSelectedKeyProvider] = useState<string>(activeModel.providerKey);
-  const [keyDraft, setKeyDraft] = useState<string>(apiKeys[activeModel.providerKey] || '');
+  const [keyDraft, setKeyDraft] = useState<string>('');
   const [showKey, setShowKey] = useState(false);
   const [testState, setTestState] = useState<{ status: 'idle' | 'testing' | 'ok' | 'error'; message?: string }>({
     status: 'idle',
@@ -109,11 +114,12 @@ export const ModelSwitcherModal: React.FC = () => {
   useEffect(() => {
     if (isModelSwitchingModalOpen) {
       setSelectedKeyProvider(activeModel.providerKey);
-      setKeyDraft(apiKeys[activeModel.providerKey] || '');
+      setKeyDraft('');
       setTestState({ status: 'idle' });
       setCustomError(null);
+      refreshAiKeyStatuses();
     }
-  }, [isModelSwitchingModalOpen, activeModel.providerKey, apiKeys]);
+  }, [isModelSwitchingModalOpen, activeModel.providerKey]);
 
   useEffect(() => {
     if (!isModelSwitchingModalOpen) return undefined;
@@ -132,15 +138,16 @@ export const ModelSwitcherModal: React.FC = () => {
       sendChatMessage(`[SYSTEM EVENT: Switched active model to ${model.name} (${model.provider}).]`);
     }
     setSelectedKeyProvider(model.providerKey);
-    setKeyDraft(apiKeys[model.providerKey] || '');
+    setKeyDraft('');
     setTestState({ status: 'idle' });
   };
 
-  const handleSaveKey = () => {
-    setApiKey(selectedKeyProvider, keyDraft);
+  const handleSaveKey = async () => {
+    await setApiKey(selectedKeyProvider, keyDraft);
+    setKeyDraft('');
     setTestState({
       status: 'ok',
-      message: keyDraft.trim() ? 'API key saved locally in browser storage.' : 'API key cleared.',
+      message: keyDraft.trim() ? 'API key saved in local backend session.' : 'API key cleared.',
     });
   };
 
@@ -150,30 +157,32 @@ export const ModelSwitcherModal: React.FC = () => {
         ? activeModel
         : allModels.find((m) => m.providerKey === selectedKeyProvider) || activeModel;
 
-    const keyToUse = keyDraft.trim() || apiKeys[selectedKeyProvider] || '';
-    if (modelForProvider.requiresApiKey !== false && !keyToUse) {
+    const draft = keyDraft.trim();
+    const hasConfigured = Boolean(configuredProviders[selectedKeyProvider]);
+    if (modelForProvider.requiresApiKey !== false && !draft && !hasConfigured) {
       setTestState({ status: 'error', message: `Enter an API key for ${modelForProvider.provider} first.` });
       return;
     }
 
-    // Save the draft key so the user can immediately use it
-    if (keyDraft.trim()) {
-      setApiKey(selectedKeyProvider, keyDraft.trim());
+    if (draft) {
+      await setApiKey(selectedKeyProvider, draft);
+      setKeyDraft('');
     }
 
     setTestState({ status: 'testing', message: `Testing ${modelForProvider.name}…` });
-    const res = await sendModelRequest({
-      model: modelForProvider,
-      apiKey: keyToUse,
-      messages: [{ sender: 'user', content: 'Reply with strictly the word: OK' }],
-      systemPrompt: 'You are a connection verifier. Reply with OK.',
-      temperature: 0,
+    const res = await testProviderConnection({
+      providerKey: selectedKeyProvider,
+      format: modelForProvider.apiFormat,
+      baseUrl: modelForProvider.baseUrl,
+      modelId: modelForProvider.modelId,
+      ...(draft ? { apiKey: draft } : {}),
     });
+    await refreshAiKeyStatuses();
 
     if (res.success) {
       setTestState({
         status: 'ok',
-        message: `Connected to ${modelForProvider.name}. Reply: "${(res.content || 'OK').slice(0, 40)}"`,
+        message: `Connected to ${modelForProvider.name}.`,
       });
     } else {
       setTestState({
@@ -189,22 +198,26 @@ export const ModelSwitcherModal: React.FC = () => {
         ? activeModel
         : allModels.find((m) => m.providerKey === selectedKeyProvider) || activeModel;
 
-    const keyToUse = keyDraft.trim() || apiKeys[selectedKeyProvider] || '';
-    if (templateModel.requiresApiKey !== false && !keyToUse) {
+    const draft = keyDraft.trim();
+    const hasConfigured = Boolean(configuredProviders[selectedKeyProvider]);
+    if (templateModel.requiresApiKey !== false && !draft && !hasConfigured) {
       setTestState({ status: 'error', message: `Enter an API key for ${templateModel.provider} first.` });
       return;
     }
 
-    if (keyDraft.trim()) {
-      setApiKey(selectedKeyProvider, keyDraft.trim());
+    if (draft) {
+      await setApiKey(selectedKeyProvider, draft);
+      setKeyDraft('');
     }
 
     setTestState({ status: 'testing', message: `Fetching available ${templateModel.provider} models…` });
     const res = await fetchAvailableProviderModels({
       format: templateModel.apiFormat,
       baseUrl: templateModel.baseUrl,
-      apiKey: keyToUse,
+      providerKey: selectedKeyProvider,
+      ...(draft ? { apiKey: draft } : {}),
     });
+    await refreshAiKeyStatuses();
 
     if (!res.success || !res.models || res.models.length === 0) {
       setTestState({
@@ -238,7 +251,7 @@ export const ModelSwitcherModal: React.FC = () => {
 
     setTestState({
       status: 'ok',
-      message: `Found ${res.models.length} live ${templateModel.provider} model(s)${added > 0 ? ` — added ${added} new model(s) to list!` : ' (all listed).' }`,
+      message: `Found ${res.models.length} live ${templateModel.provider} model(s)${added > 0 ? ` — added ${added} new model(s) to list!` : ' (all listed).'}`,
     });
   };
 
@@ -328,18 +341,16 @@ export const ModelSwitcherModal: React.FC = () => {
           <button
             type="button"
             onClick={() => setTab('models')}
-            className={`ide-focus-ring border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
-              tab === 'models' ? 'border-ide-focus text-ide-strong' : 'border-transparent text-ide-muted hover:text-ide-text'
-            }`}
+            className={`ide-focus-ring border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${tab === 'models' ? 'border-ide-focus text-ide-strong' : 'border-transparent text-ide-muted hover:text-ide-text'
+              }`}
           >
             Models & API Keys ({allModels.length})
           </button>
           <button
             type="button"
             onClick={() => setTab('custom')}
-            className={`ide-focus-ring flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
-              tab === 'custom' ? 'border-ide-focus text-ide-strong' : 'border-transparent text-ide-muted hover:text-ide-text'
-            }`}
+            className={`ide-focus-ring flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${tab === 'custom' ? 'border-ide-focus text-ide-strong' : 'border-transparent text-ide-muted hover:text-ide-text'
+              }`}
           >
             <Plus className="h-3.5 w-3.5 text-ide-cyan" />
             Add Custom Model / Provider
@@ -356,15 +367,15 @@ export const ModelSwitcherModal: React.FC = () => {
             <div className="min-h-0 flex-1 overflow-y-auto">
               {allModels.map((model) => {
                 const isSelected = model.id === activeModel.id;
-                const hasKey = Boolean(apiKeys[model.providerKey]);
+                const hasKey = Boolean(configuredProviders[model.providerKey]);
+                const pStatus = providerStatuses[model.providerKey] || (hasKey ? 'configured' : 'disconnected');
                 const needsKey = model.requiresApiKey !== false;
 
                 return (
                   <div
                     key={model.id}
-                    className={`flex w-full items-start gap-3 border-b border-ide-border px-4 py-3 text-left transition-colors ${
-                      isSelected ? 'bg-ide-selected' : 'hover:bg-ide-hover'
-                    }`}
+                    className={`flex w-full items-start gap-3 border-b border-ide-border px-4 py-3 text-left transition-colors ${isSelected ? 'bg-ide-selected' : 'hover:bg-ide-hover'
+                      }`}
                   >
                     <button
                       type="button"
@@ -381,18 +392,22 @@ export const ModelSwitcherModal: React.FC = () => {
                           <span className="font-mono text-[10px] text-ide-subtle">{model.provider}</span>
                           <span className="font-mono text-[10px] text-ide-cyan">{model.badge}</span>
                           {needsKey ? (
-                            hasKey ? (
-                              <span className="rounded border border-ide-emerald/40 bg-ide-emerald/10 px-1.5 py-0.2 font-mono text-[9px] text-ide-emerald">
-                                Key Ready
+                            pStatus === 'connected' ? (
+                              <span className="rounded border border-ide-emerald/40 bg-ide-emerald/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-emerald">
+                                Connected
+                              </span>
+                            ) : hasKey ? (
+                              <span className="rounded border border-ide-cyan/40 bg-ide-cyan/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-cyan">
+                                Configured
                               </span>
                             ) : (
-                              <span className="rounded border border-ide-amber/40 bg-ide-amber/10 px-1.5 py-0.2 font-mono text-[9px] text-ide-amber">
-                                API Key Needed
+                              <span className="rounded border border-ide-amber/40 bg-ide-amber/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-amber">
+                                Disconnected
                               </span>
                             )
                           ) : (
-                            <span className="rounded border border-ide-border px-1.5 py-0.2 font-mono text-[9px] text-ide-subtle">
-                              No Key Required
+                            <span className="rounded border border-ide-border px-1.5 py-0.5 font-mono text-[9px] text-ide-subtle">
+                              Local · {pStatus === 'connected' ? 'Connected' : 'Ready'}
                             </span>
                           )}
                         </span>
@@ -419,11 +434,10 @@ export const ModelSwitcherModal: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleSelectModel(model)}
-                        className={`flex h-6 w-6 items-center justify-center rounded-ide-control border ${
-                          isSelected
-                            ? 'border-ide-emerald bg-ide-emerald text-ide-shell'
-                            : 'border-ide-border-strong text-transparent hover:border-ide-focus'
-                        }`}
+                        className={`flex h-6 w-6 items-center justify-center rounded-ide-control border ${isSelected
+                          ? 'border-ide-emerald bg-ide-emerald text-ide-shell'
+                          : 'border-ide-border-strong text-transparent hover:border-ide-focus'
+                          }`}
                         aria-label={isSelected ? 'Selected model' : 'Select model'}
                       >
                         <Check className="h-3.5 w-3.5" />
@@ -446,7 +460,7 @@ export const ModelSwitcherModal: React.FC = () => {
                   onChange={(e) => {
                     const pKey = e.target.value;
                     setSelectedKeyProvider(pKey);
-                    setKeyDraft(apiKeys[pKey] || '');
+                    setKeyDraft('');
                     setTestState({ status: 'idle' });
                   }}
                   aria-label="Select provider for API key"
@@ -454,7 +468,7 @@ export const ModelSwitcherModal: React.FC = () => {
                 >
                   {uniqueProviders.map((p) => (
                     <option key={p.providerKey} value={p.providerKey}>
-                      {p.providerName} {apiKeys[p.providerKey] ? '(Configured)' : '(Not Set)'}
+                      {p.providerName} {configuredProviders[p.providerKey] ? '(Configured)' : '(Not Set)'}
                     </option>
                   ))}
                 </select>
@@ -466,7 +480,11 @@ export const ModelSwitcherModal: React.FC = () => {
                     type={showKey ? 'text' : 'password'}
                     value={keyDraft}
                     onChange={(e) => setKeyDraft(e.target.value)}
-                    placeholder={`Paste API key for ${selectedKeyProvider} (stored locally)…`}
+                    placeholder={
+                      configuredProviders[selectedKeyProvider]
+                        ? `Key configured on backend for ${selectedKeyProvider} (paste new key to replace)…`
+                        : `Paste API key for ${selectedKeyProvider}…`
+                    }
                     className="min-w-0 flex-1 bg-transparent px-3 py-1.5 font-mono text-xs text-ide-strong outline-none placeholder:text-ide-subtle"
                   />
                   <button
@@ -508,13 +526,12 @@ export const ModelSwitcherModal: React.FC = () => {
 
               {testState.status !== 'idle' && (
                 <div
-                  className={`flex items-center gap-2 font-mono text-[11px] ${
-                    testState.status === 'ok'
-                      ? 'text-ide-emerald'
-                      : testState.status === 'error'
-                        ? 'text-ide-rose'
-                        : 'text-ide-muted'
-                  }`}
+                  className={`flex items-center gap-2 font-mono text-[11px] ${testState.status === 'ok'
+                    ? 'text-ide-emerald'
+                    : testState.status === 'error'
+                      ? 'text-ide-rose'
+                      : 'text-ide-muted'
+                    }`}
                 >
                   {testState.status === 'error' && <AlertCircle className="h-3.5 w-3.5 shrink-0" />}
                   {testState.status === 'ok' && <Check className="h-3.5 w-3.5 shrink-0" />}
@@ -674,7 +691,7 @@ export const ModelSwitcherModal: React.FC = () => {
         )}
 
         <footer className="flex items-center justify-between gap-3 border-t border-ide-border px-4 py-2.5 font-mono text-[10px] text-ide-subtle">
-          <span>API keys are stored only in your local browser storage.</span>
+          <span>API keys are stored strictly in your local backend session (never in browser localStorage).</span>
           <button
             type="button"
             onClick={() => setIsModelSwitchingModalOpen(false)}

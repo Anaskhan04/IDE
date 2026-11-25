@@ -113,11 +113,11 @@ export const MasterPromptAnalyzer: React.FC = () => {
           </div>
 
           <div className="p-4 rounded-xl bg-ide-panel border border-ide-border">
-            <span className="text-xs font-mono text-slate-400">Re-reading Token Savings</span>
+            <span className="text-xs font-mono text-slate-400">Indexed Workspace Files</span>
             <div className="my-2">
-              <span className="text-xl font-bold font-mono text-emerald-400">{(tokensSaved / 1000).toFixed(1)}k tokens</span>
+              <span className="text-xl font-bold font-mono text-emerald-400">{files.length} files</span>
             </div>
-            <p className="text-[11px] text-slate-400">{masterPrompt.cacheHitRatio} cache hit ratio</p>
+            <p className="text-[11px] text-slate-400">Live in-memory AST & symbol index</p>
           </div>
         </div>
 

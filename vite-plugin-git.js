@@ -26,17 +26,42 @@ import {
   startOAuthDeviceFlow,
   verifyGitHubToken,
 } from './vite-github-utils.js';
+import {
+  getProviderKeyStatuses,
+  requestProviderChat,
+  requestProviderModels,
+  setBackendApiKey,
+} from './vite-ai-utils.js';
 
 /**
- * Resolve a relative file/folder path safely inside a workspace root.
+ * Resolve a relative file/folder path safely inside a workspace root, including symlink checks.
  */
-function resolveSafePath(rootDir, relativePath) {
+export function resolveSafePath(rootDir, relativePath) {
   const normalizedRoot = path.resolve(rootDir);
+  const realRoot = fs.existsSync(normalizedRoot) ? fs.realpathSync(normalizedRoot) : normalizedRoot;
   const cleanRel = String(relativePath || '').replace(/^[/\\]+/, '');
+  if (!cleanRel || cleanRel.includes('\0')) {
+    throw new Error(`Invalid relative path: ${relativePath}`);
+  }
   const resolved = path.resolve(normalizedRoot, cleanRel);
   if (resolved !== normalizedRoot && !resolved.startsWith(normalizedRoot + path.sep)) {
     throw new Error(`Path escapes workspace root: ${relativePath}`);
   }
+
+  // Verify existing target or nearest existing ancestor does not escape via symlink
+  let probe = resolved;
+  while (!fs.existsSync(probe) && probe !== normalizedRoot) {
+    const parent = path.dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  if (fs.existsSync(probe)) {
+    const realProbe = fs.realpathSync(probe);
+    if (realProbe !== realRoot && !realProbe.startsWith(realRoot + path.sep)) {
+      throw new Error(`Symlink escapes workspace root: ${relativePath}`);
+    }
+  }
+
   return resolved;
 }
 
@@ -757,243 +782,107 @@ export function gitApiPlugin() {
         }
 
         // ============================================================
-        // AI MODEL DISCOVERY & GATEWAY PROXY
+        // AI MODEL DISCOVERY & GATEWAY PROXY (Backend-Managed Keys)
         // ============================================================
 
+        if (url === '/api/ai/keys/status') {
+          return sendJson(res, 200, { success: true, ...getProviderKeyStatuses() });
+        }
+
+        if (url === '/api/ai/keys/set') {
+          const { providerKey, apiKey } = body;
+          if (!providerKey) {
+            return sendJson(res, 400, { success: false, error: 'providerKey is required' });
+          }
+          setBackendApiKey(providerKey, apiKey || '');
+          return sendJson(res, 200, { success: true, ...getProviderKeyStatuses() });
+        }
+
+        if (url === '/api/ai/test') {
+          const { format = 'openai', baseUrl = '', apiKey = '', providerKey = '', modelId } = body;
+          if (modelId) {
+            const chatTest = await requestProviderChat({
+              format,
+              baseUrl,
+              apiKey,
+              providerKey,
+              modelId,
+              messages: [{ role: 'user', content: 'Reply with OK' }],
+              temperature: 0,
+              maxTokens: 16,
+              timeoutMs: 15000,
+            });
+            return sendJson(res, chatTest.status || 200, {
+              success: chatTest.success,
+              error: chatTest.error,
+              ...getProviderKeyStatuses(),
+            });
+          }
+          const modTest = await requestProviderModels({ format, baseUrl, apiKey, providerKey });
+          return sendJson(res, modTest.status || 200, {
+            success: modTest.success,
+            modelsCount: modTest.models?.length || 0,
+            error: modTest.error,
+            ...getProviderKeyStatuses(),
+          });
+        }
+
         if (url === '/api/ai/models') {
-          const { format = 'gemini', baseUrl = '', apiKey = '' } = body;
-
-          if (format === 'gemini') {
-            if (!apiKey) {
-              return sendJson(res, 401, { success: false, error: 'Google Gemini API key is required.' });
-            }
-            const rootUrl = (baseUrl || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
-            const apiRes = await fetch(`${rootUrl}/models?key=${encodeURIComponent(apiKey)}`);
-            const data = await apiRes.json().catch(() => ({}));
-            if (!apiRes.ok) {
-              return sendJson(res, apiRes.status, {
-                success: false,
-                error: data?.error?.message || `Failed to list Gemini models (${apiRes.status})`,
-              });
-            }
-            const models = (Array.isArray(data?.models) ? data.models : [])
-              .filter((m) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
-              .map((m) => ({
-                modelId: String(m.name || '').replace(/^models\//, ''),
-                name: m.displayName || String(m.name || '').replace(/^models\//, ''),
-                description: m.description || '',
-                contextWindow: m.inputTokenLimit ? `${Math.round(m.inputTokenLimit / 1000)}k` : '1M',
-              }))
-              .filter((m) => m.modelId && /gemini/i.test(m.modelId));
-            return sendJson(res, 200, { success: true, models });
-          }
-
-          if (format === 'openai') {
-            const rootUrl = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
-            const headers = {};
-            if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-            const apiRes = await fetch(`${rootUrl}/models`, { headers });
-            const data = await apiRes.json().catch(() => ({}));
-            if (!apiRes.ok) {
-              return sendJson(res, apiRes.status, {
-                success: false,
-                error: data?.error?.message || `Failed to list models (${apiRes.status})`,
-              });
-            }
-            const models = (Array.isArray(data?.data) ? data.data : []).slice(0, 40).map((m) => ({
-              modelId: m.id,
-              name: m.id,
-              description: m.owned_by ? `Owner: ${m.owned_by}` : '',
-              contextWindow: '128k',
-            }));
-            return sendJson(res, 200, { success: true, models });
-          }
-
-          return sendJson(res, 200, { success: true, models: [] });
+          const { format = 'gemini', baseUrl = '', apiKey = '', providerKey = '' } = body;
+          const result = await requestProviderModels({ format, baseUrl, apiKey, providerKey });
+          return sendJson(res, result.status || 200, { ...result, ...getProviderKeyStatuses() });
         }
 
         if (url === '/api/ai/chat') {
-          const {
-            format = 'openai',
-            baseUrl = '',
-            apiKey = '',
-            modelId,
-            messages = [],
-            systemPrompt = '',
-            temperature = 0.2,
-            maxTokens = 8192,
-          } = body;
+          const controller = new AbortController();
+          req.on('close', () => controller.abort());
+          const result = await requestProviderChat({
+            format: body.format || 'openai',
+            baseUrl: body.baseUrl || '',
+            apiKey: body.apiKey || '',
+            providerKey: body.providerKey || '',
+            modelId: body.modelId,
+            messages: body.messages || [],
+            systemPrompt: body.systemPrompt || '',
+            temperature: body.temperature ?? 0.2,
+            maxTokens: body.maxTokens ?? 8192,
+            signal: controller.signal,
+          });
+          return sendJson(res, result.status || 200, { ...result, ...getProviderKeyStatuses() });
+        }
 
-          if (!modelId) {
-            return sendJson(res, 400, { success: false, error: 'Model ID is required' });
-          }
+        if (url === '/api/ai/chat-stream') {
+          const controller = new AbortController();
+          req.on('close', () => controller.abort());
 
-          if (format === 'gemini') {
-            if (!apiKey) {
-              return sendJson(res, 401, { success: false, error: 'Google Gemini API key is required.' });
-            }
-            const rootUrl = (baseUrl || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '');
-            const cleanModel = modelId.replace(/^models\//, '');
-            const endpoint = `${rootUrl}/models/${encodeURIComponent(cleanModel)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('Connection', 'keep-alive');
 
-            const geminiContents = messages
-              .filter((m) => m.role !== 'system' && m.content)
-              .map((m) => ({
-                role: m.role === 'assistant' ? 'model' : 'user',
-                parts: [{ text: String(m.content) }],
-              }));
-
-            const payload = {
-              contents: geminiContents,
-              generationConfig: {
-                temperature,
-                maxOutputTokens: maxTokens,
-              },
-            };
-            if (systemPrompt) {
-              payload.systemInstruction = {
-                parts: [{ text: systemPrompt }],
-              };
-            }
-
-            const apiRes = await fetch(endpoint, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            });
-            const data = await apiRes.json().catch(() => ({}));
-
-            if (!apiRes.ok) {
-              const errMsg = data?.error?.message || `Gemini API error (${apiRes.status})`;
-              return sendJson(res, apiRes.status, { success: false, error: errMsg });
-            }
-
-            const candidate = data?.candidates?.[0];
-            const replyText = (candidate?.content?.parts || [])
-              .map((p) => p.text || '')
-              .join('')
-              .trim();
-
-            if (!replyText) {
-              const blockReason = candidate?.finishReason || data?.promptFeedback?.blockReason;
-              return sendJson(res, 200, {
-                success: false,
-                error: blockReason
-                  ? `Gemini returned empty response (${blockReason}).`
-                  : 'Gemini returned an empty response.',
-              });
-            }
-
-            return sendJson(res, 200, {
-              success: true,
-              content: replyText,
-              usage: {
-                promptTokens: data?.usageMetadata?.promptTokenCount || 0,
-                completionTokens: data?.usageMetadata?.candidatesTokenCount || 0,
-                totalTokens: data?.usageMetadata?.totalTokenCount || 0,
-              },
-            });
-          }
-
-          if (format === 'anthropic') {
-            if (!apiKey) {
-              return sendJson(res, 401, { success: false, error: 'Anthropic API key is required.' });
-            }
-            const rootUrl = (baseUrl || 'https://api.anthropic.com/v1').replace(/\/+$/, '');
-            const endpoint = rootUrl.endsWith('/messages') ? rootUrl : `${rootUrl}/messages`;
-
-            const anthropicMsgs = messages
-              .filter((m) => m.role !== 'system' && m.content)
-              .map((m) => ({
-                role: m.role === 'assistant' ? 'assistant' : 'user',
-                content: String(m.content),
-              }));
-
-            const apiRes = await fetch(endpoint, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': apiKey,
-                'anthropic-version': '2023-06-01',
-              },
-              body: JSON.stringify({
-                model: modelId,
-                max_tokens: maxTokens,
-                temperature,
-                ...(systemPrompt ? { system: systemPrompt } : {}),
-                messages: anthropicMsgs,
-              }),
-            });
-
-            const data = await apiRes.json().catch(() => ({}));
-            if (!apiRes.ok) {
-              const errMsg = data?.error?.message || `Anthropic API error (${apiRes.status})`;
-              return sendJson(res, apiRes.status, { success: false, error: errMsg });
-            }
-
-            const replyText = (data?.content || [])
-              .map((c) => c.text || '')
-              .join('')
-              .trim();
-
-            return sendJson(res, 200, {
-              success: true,
-              content: replyText,
-              usage: {
-                promptTokens: data?.usage?.input_tokens || 0,
-                completionTokens: data?.usage?.output_tokens || 0,
-                totalTokens: (data?.usage?.input_tokens || 0) + (data?.usage?.output_tokens || 0),
-              },
-            });
-          }
-
-          // OpenAI / DeepSeek / OpenRouter / Groq / Ollama / Custom OpenAI-Compatible
-          const rootUrl = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
-          const endpoint = rootUrl.endsWith('/chat/completions') ? rootUrl : `${rootUrl}/chat/completions`;
-          const headers = { 'Content-Type': 'application/json' };
-          if (apiKey) {
-            headers.Authorization = `Bearer ${apiKey}`;
-          }
-
-          const openaiMessages = [];
-          if (systemPrompt) {
-            openaiMessages.push({ role: 'system', content: systemPrompt });
-          }
-          for (const m of messages) {
-            if (!m.content) continue;
-            openaiMessages.push({
-              role: m.role === 'assistant' ? 'assistant' : 'user',
-              content: String(m.content),
-            });
-          }
-
-          const apiRes = await fetch(endpoint, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              model: modelId,
-              messages: openaiMessages,
-              temperature,
-              max_tokens: maxTokens,
-            }),
+          const result = await requestProviderChat({
+            format: body.format || 'openai',
+            baseUrl: body.baseUrl || '',
+            apiKey: body.apiKey || '',
+            providerKey: body.providerKey || '',
+            modelId: body.modelId,
+            messages: body.messages || [],
+            systemPrompt: body.systemPrompt || '',
+            temperature: body.temperature ?? 0.2,
+            maxTokens: body.maxTokens ?? 8192,
+            signal: controller.signal,
           });
 
-          const data = await apiRes.json().catch(() => ({}));
-          if (!apiRes.ok) {
-            const errMsg = data?.error?.message || data?.message || `Provider API error (${apiRes.status})`;
-            return sendJson(res, apiRes.status, { success: false, error: errMsg });
+          if (!res.writableEnded) {
+            if (result.success) {
+              res.write(`data: ${JSON.stringify({ delta: result.content || '' })}\n\n`);
+              res.write(`data: ${JSON.stringify({ done: true, usage: result.usage, ...getProviderKeyStatuses() })}\n\n`);
+            } else {
+              res.write(`data: ${JSON.stringify({ error: result.error || 'AI request failed', aborted: result.aborted })}\n\n`);
+            }
+            res.end();
           }
-
-          const replyText = data?.choices?.[0]?.message?.content || '';
-          return sendJson(res, 200, {
-            success: true,
-            content: replyText,
-            usage: {
-              promptTokens: data?.usage?.prompt_tokens || 0,
-              completionTokens: data?.usage?.completion_tokens || 0,
-              totalTokens: data?.usage?.total_tokens || 0,
-            },
-          });
+          return;
         }
 
         // ============================================================

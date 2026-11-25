@@ -73,6 +73,7 @@ export const CodeEditor: React.FC = () => {
     setTargetEditorLine,
     diagnostics,
     setIsGitHubModalOpen,
+    setSelectedEditorCode,
   } = useIDE();
 
   const activeFile = files.find((file) => file.id === activeFileId);
@@ -318,6 +319,11 @@ export const CodeEditor: React.FC = () => {
     const textBefore = target.value.substring(0, target.selectionStart);
     const linesBefore = textBefore.split('\n');
     setCursorPos({ line: linesBefore.length, col: linesBefore[linesBefore.length - 1].length + 1 });
+    if (target.selectionEnd > target.selectionStart) {
+      setSelectedEditorCode(target.value.slice(target.selectionStart, target.selectionEnd));
+    } else {
+      setSelectedEditorCode('');
+    }
   };
 
   // IDE Textarea Key Ergonomics: Tab, Shift+Tab, Enter auto-indent, Ctrl+/ comment, auto-pair brackets
