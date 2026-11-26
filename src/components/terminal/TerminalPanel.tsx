@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Maximize2, Minimize2, Play, Terminal as TerminalIcon, Trash2, X } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 
-export const TerminalPanel: React.FC = () => {
+export const TerminalPanel: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const {
     terminalHistory,
     terminalCwd,
@@ -118,20 +118,26 @@ export const TerminalPanel: React.FC = () => {
 
   return (
     <aside
-      className="relative z-20 flex flex-col border-t border-ide-border bg-ide-panel select-none"
-      style={{ height: isMaximized ? '65%' : `${panelHeight}px` }}
+      className={
+        embedded
+          ? 'relative flex h-full flex-col bg-ide-panel select-none'
+          : 'relative z-20 flex flex-col border-t border-ide-border bg-ide-panel select-none'
+      }
+      style={embedded ? undefined : { height: isMaximized ? '65%' : `${panelHeight}px` }}
       data-purpose="integrated-terminal-panel"
       aria-label="Integrated Terminal"
       onClick={() => inputRef.current?.focus()}
     >
       {/* Top resize handle */}
-      <div
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        className="absolute -top-1.5 inset-x-0 z-30 h-3 cursor-ns-resize transition-colors hover:bg-ide-focus/40"
-        title="Drag to resize terminal"
-      />
+      {!embedded && (
+        <div
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          className="absolute -top-1.5 inset-x-0 z-30 h-3 cursor-ns-resize transition-colors hover:bg-ide-focus/40"
+          title="Drag to resize terminal"
+        />
+      )}
 
       {/* Header */}
       <header className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-ide-border bg-ide-shell px-3 text-[11px]">

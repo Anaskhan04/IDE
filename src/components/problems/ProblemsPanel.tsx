@@ -26,7 +26,7 @@ import {
   TS_COMPILER_SCOPE_INFO,
 } from '../../utils/diagnosticsEngine';
 
-export const ProblemsPanel: React.FC = () => {
+export const ProblemsPanel: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const {
     diagnostics,
     diagnosticsSummary,
@@ -212,19 +212,25 @@ export const ProblemsPanel: React.FC = () => {
 
   return (
     <aside
-      className="relative flex flex-col border-t border-ide-border bg-ide-panel select-none transition-all duration-150 z-20"
-      style={{ height: isMaximized ? '70%' : `${panelHeight}px` }}
+      className={
+        embedded
+          ? 'relative flex h-full flex-col bg-ide-panel select-none'
+          : 'relative flex flex-col border-t border-ide-border bg-ide-panel select-none transition-all duration-150 z-20'
+      }
+      style={embedded ? undefined : { height: isMaximized ? '70%' : `${panelHeight}px` }}
       data-purpose="problems-and-diagnostics-panel"
       aria-label="Problems and Diagnostics Panel"
     >
       {/* Top resize handle */}
-      <div
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        className="absolute -top-1.5 inset-x-0 h-3 cursor-ns-resize hover:bg-ide-focus/40 z-30 transition-colors"
-        title="Drag to resize problems panel"
-      />
+      {!embedded && (
+        <div
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          className="absolute -top-1.5 inset-x-0 h-3 cursor-ns-resize hover:bg-ide-focus/40 z-30 transition-colors"
+          title="Drag to resize problems panel"
+        />
+      )}
 
       {/* Panel Header & Navigation Controls */}
       <header className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-ide-border bg-ide-shell px-3 text-[11px]">

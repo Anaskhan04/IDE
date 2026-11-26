@@ -108,28 +108,59 @@ export function selectRelevantContext(options: {
   // 2. Active file
   tryAddFile(activeFile, 'Active Editor', 8000);
 
-  // 3. Knowledge Graph direct imports & dependents of active file
+  // 3. Knowledge Graph direct imports, calls, heritage, renders, types & test references
   if (activeFile && graphNodes.length > 0 && graphEdges.length > 0) {
     const activeNodeIds = new Set(
       graphNodes.filter((n) => n.path === activeFile.path).map((n) => n.id)
     );
-    const relatedPaths = new Set<string>();
+    const outgoingDeps = new Map<string, string>();
+    const incomingRefs = new Map<string, string>();
     const nodeById = new Map(graphNodes.map((n) => [n.id, n]));
+    const SEMANTIC_EDGE_TYPES = new Set([
+      'IMPORTS',
+      'CALLS',
+      'EXTENDS',
+      'IMPLEMENTS',
+      'RENDERS',
+      'TYPE_REFERENCE',
+      'REFERENCES',
+      'TEST_REFERENCE',
+    ]);
 
     for (const edge of graphEdges) {
-      if (edge.type !== 'IMPORTS' && edge.type !== 'CALLS') continue;
+      if (!SEMANTIC_EDGE_TYPES.has(edge.type)) continue;
       if (activeNodeIds.has(edge.source)) {
         const tgt = nodeById.get(edge.target);
-        if (tgt && tgt.path !== activeFile.path) relatedPaths.add(tgt.path);
+        if (tgt && tgt.path !== activeFile.path) {
+          outgoingDeps.set(tgt.path, `Outgoing ${edge.type} (${tgt.label}${tgt.line ? ` L${tgt.line}` : ''})`);
+        }
       } else if (activeNodeIds.has(edge.target)) {
         const src = nodeById.get(edge.source);
-        if (src && src.path !== activeFile.path) relatedPaths.add(src.path);
+        if (src && src.path !== activeFile.path) {
+          incomingRefs.set(src.path, `Incoming ${edge.type} (${src.label}${src.line ? ` L${src.line}` : ''})`);
+        }
       }
     }
 
-    for (const relPath of Array.from(relatedPaths).slice(0, 5)) {
+    for (const [relPath, detail] of Array.from(outgoingDeps.entries()).slice(0, 4)) {
       const f = files.find((x) => x.path === relPath);
       tryAddFile(f, 'Graph Dependency', 3500);
+      if (f && addedPaths.has(f.path)) {
+        codeBlocks[codeBlocks.length - 1] = codeBlocks[codeBlocks.length - 1].replace(
+          `[Graph Dependency]:`,
+          `[Graph Dependency — ${detail}]:`,
+        );
+      }
+    }
+    for (const [relPath, detail] of Array.from(incomingRefs.entries()).slice(0, 3)) {
+      const f = files.find((x) => x.path === relPath);
+      tryAddFile(f, 'Graph Dependent', 3000);
+      if (f && addedPaths.has(f.path)) {
+        codeBlocks[codeBlocks.length - 1] = codeBlocks[codeBlocks.length - 1].replace(
+          `[Graph Dependent]:`,
+          `[Graph Dependent — ${detail}]:`,
+        );
+      }
     }
   }
 

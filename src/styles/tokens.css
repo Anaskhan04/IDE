@@ -1,45 +1,151 @@
-/* 
-  Centralized Design Tokens
-  These variables define the color palette, sizing, and structure for the IDE.
-  All UI components MUST use these semantic tokens rather than hardcoded values.
+/*
+  IntelliCode Design System 2.0 — Centralized Semantic Tokens
+  RGB triplets enable Tailwind alpha modifiers (e.g. bg-ide-panel/80).
 */
 
 :root {
-  /* Layout & Surfaces (RGB values for tailwind opacity support) */
-  --ide-shell: 8 11 16;
-  --ide-bg: 12 16 23;
-  --ide-sidebar: 11 15 22;
-  --ide-panel: 16 21 32;
-  --ide-surface: 17 24 36;
-  --ide-card: 22 28 43;
-  
-  /* Interactive States */
-  --ide-selected: 23 34 53;
-  --ide-hover: 26 36 51;
-  
-  /* Borders */
-  --ide-border: 32 42 58;
-  --ide-border-strong: 43 56 78;
-  
-  /* Typography */
-  --ide-text-strong: 245 247 250;
-  --ide-text: 199 208 220;
-  --ide-text-muted: 154 167 183;
-  --ide-text-subtle: 113 128 150;
-  
-  /* Accents & States */
-  --ide-focus: 59 130 246;
-  --ide-cyan: 6 182 212;
-  --ide-emerald: 16 185 129;
-  --ide-amber: 245 158 11;
-  --ide-rose: 244 63 94;
-  --ide-purple: 139 92 246;
-  
-  /* Editor specific */
-  --ide-code: 8 12 20;
-  
-  /* Radius */
-  --ide-control-radius: 4px;
-  --ide-panel-radius: 6px;
+  /* IntelliCode Obsidian (Default Dark Theme) */
+  --ide-bg: 16 17 20;               /* #101114 Workspace */
+  --ide-shell: 20 21 25;            /* #141519 Application chrome */
+  --ide-activitybar: 20 21 25;      /* #141519 Activity bar */
+  --ide-sidebar: 20 21 25;          /* #141519 Explorer & sidebars */
+  --ide-panel: 27 29 34;            /* #1B1D22 Elevated surface */
+  --ide-surface: 27 29 34;          /* #1B1D22 Secondary elevated surface */
+  --ide-card: 27 29 34;             /* #1B1D22 Card surface */
 
+  /* Interactive Surfaces */
+  --ide-hover: 35 38 45;            /* #23262D Hover surface */
+  --ide-pressed: 46 51 62;          /* #2E333E Pressed surface */
+  --ide-selected: 41 46 56;         /* #292E38 Selected surface */
+
+  /* Borders */
+  --ide-border: 41 44 51;           /* #292C33 Subtle border */
+  --ide-border-strong: 54 59 69;    /* #363B45 Essential control boundary */
+
+  /* Foregrounds */
+  --ide-text-strong: 230 232 236;   /* #E6E8EC Primary text */
+  --ide-text: 230 232 236;          /* #E6E8EC Primary text */
+  --ide-text-muted: 161 166 176;    /* #A1A6B0 Secondary text */
+  --ide-text-subtle: 119 126 138;   /* #777E8A Muted text */
+
+  /* Accent & Semantic States */
+  --ide-focus: 91 141 239;          /* #5B8DEF Primary accent & focus ring */
+  --ide-accent-hover: 74 125 224;   /* #4A7DE0 Accent hover */
+  --ide-accent-pressed: 61 111 208; /* #3D6FD0 Accent pressed */
+  --ide-on-accent: 12 17 27;        /* #0C111B High-contrast text on accent */
+
+  --ide-destructive: 224 108 117;       /* #E06C75 Destructive fill */
+  --ide-destructive-hover: 206 90 100;  /* #CE5A64 Destructive hover */
+  --ide-on-destructive: 18 9 11;        /* #12090B High-contrast text on destructive */
+
+  --ide-emerald: 67 181 129;        /* #43B581 Success */
+  --ide-amber: 224 174 89;          /* #E0AE59 Warning */
+  --ide-rose: 224 108 117;          /* #E06C75 Error */
+  --ide-cyan: 120 169 230;          /* #78A9E6 Information */
+  --ide-purple: 167 139 250;        /* #A78BFA Intelligence */
+
+  /* Editor & Overlay */
+  --ide-code: 16 17 20;             /* #101114 Code surface */
+  --ide-overlay: 10 11 14;          /* #0A0B0E Modal backdrop */
+
+  /* Theme-Aware Syntax Highlighting (Obsidian) */
+  --syntax-keyword: 199 146 234;    /* #C792EA */
+  --syntax-function: 120 169 230;   /* #78A9E6 */
+  --syntax-string: 126 198 153;     /* #7EC699 */
+  --syntax-number: 224 174 89;      /* #E0AE59 */
+  --syntax-comment: 119 126 138;    /* #777E8A */
+  --syntax-type: 167 139 250;       /* #A78BFA */
+  --syntax-tag: 224 108 117;        /* #E06C75 */
+  --syntax-variable: 230 232 236;   /* #E6E8EC */
+  --syntax-operator: 161 166 176;   /* #A1A6B0 */
+
+  /* Semantic Knowledge Graph Visualization Tokens (Obsidian) */
+  --graph-module: 148 163 184;      /* #94A3B8 Folder / Module */
+  --graph-file: 96 165 250;         /* #60A5FA Source File */
+  --graph-function: 179 157 250;    /* #B39DFA Function / Method */
+  --graph-class: 245 184 90;        /* #F5B85A Class */
+  --graph-interface: 45 212 191;    /* #2DD4BF Interface / Type */
+  --graph-test: 74 222 128;         /* #4ADE80 Test */
+  --graph-package: 244 114 182;     /* #F472B6 External Package */
+  --graph-route: 251 146 60;        /* #FB923C API / Route */
+
+  /* Radii */
+  --ide-control-radius: 6px;        /* Buttons & inputs */
+  --ide-small-radius: 4px;          /* Badges, chips, tree rows */
+  --ide-panel-radius: 8px;          /* Menus & cards */
+  --ide-menu-radius: 8px;
+  --ide-dialog-radius: 12px;        /* Dialogs */
+
+  /* Layout Dimensions */
+  --ide-topbar-h: 44px;
+  --ide-activitybar-w: 48px;
+  --ide-explorer-w: 248px;
+  --ide-tabs-h: 36px;
+  --ide-row-h: 28px;
+  --ide-control-h: 32px;
+  --ide-statusbar-h: 24px;
+  --ide-ai-sidebar-w: 360px;
+}
+
+/* IntelliCode Porcelain (Light Theme Semantic Overrides) */
+html.light,
+[data-theme="light"] {
+  --ide-bg: 247 247 245;            /* #F7F7F5 Warm neutral workspace */
+  --ide-shell: 231 233 237;         /* #E7E9ED Application chrome */
+  --ide-activitybar: 227 229 233;   /* #E3E5E9 Activity bar */
+  --ide-sidebar: 237 238 241;       /* #EDEEF1 Explorer & sidebars */
+  --ide-panel: 250 250 251;         /* #FAFAFB Elevated surface */
+  --ide-surface: 242 243 246;       /* #F2F3F6 Secondary surface */
+  --ide-card: 250 250 251;          /* #FAFAFB Card surface */
+
+  --ide-hover: 225 228 234;         /* #E1E4EA Hover surface */
+  --ide-pressed: 214 218 226;       /* #D6DAE2 Pressed surface */
+  --ide-selected: 220 229 244;      /* #DCE5F4 Selected surface */
+
+  --ide-border: 205 209 214;        /* #CDD1D6 Subtle border */
+  --ide-border-strong: 182 188 196; /* #B6BCC4 Essential control boundary */
+
+  --ide-text-strong: 36 39 46;      /* #24272E Primary text */
+  --ide-text: 36 39 46;             /* #24272E Primary text */
+  --ide-text-muted: 82 91 104;      /* #525B68 Secondary text */
+  --ide-text-subtle: 100 108 121;   /* #646C79 Muted text (>=4.5:1 on #F7F7F5) */
+
+  --ide-focus: 55 101 197;          /* #3765C5 Primary accent */
+  --ide-accent-hover: 45 86 174;    /* #2D56AE Accent hover */
+  --ide-accent-pressed: 37 73 151;  /* #254997 Accent pressed */
+  --ide-on-accent: 255 255 255;     /* #FFFFFF On accent */
+
+  --ide-destructive: 189 63 73;     /* #BD3F49 Destructive */
+  --ide-destructive-hover: 166 51 60;
+  --ide-on-destructive: 255 255 255;
+
+  --ide-emerald: 35 125 82;         /* #237D52 Success */
+  --ide-amber: 162 94 40;           /* #A25E28 Warning */
+  --ide-rose: 181 61 71;            /* #B53D47 Error */
+  --ide-cyan: 45 86 143;            /* #2D568F Information */
+  --ide-purple: 107 75 161;         /* #6B4BA1 Intelligence */
+
+  --ide-code: 247 247 245;          /* #F7F7F5 Code surface */
+  --ide-overlay: 15 23 42;
+
+  /* Theme-Aware Syntax Highlighting (Porcelain) */
+  --syntax-keyword: 121 80 161;     /* #7950A1 */
+  --syntax-function: 45 86 143;     /* #2D568F */
+  --syntax-string: 53 119 91;       /* #35775B */
+  --syntax-number: 162 94 40;       /* #A25E28 */
+  --syntax-comment: 100 108 121;    /* #646C79 */
+  --syntax-type: 107 75 161;        /* #6B4BA1 */
+  --syntax-tag: 181 61 71;          /* #B53D47 */
+  --syntax-variable: 36 39 46;      /* #24272E */
+  --syntax-operator: 82 91 104;     /* #525B68 */
+
+  /* Semantic Knowledge Graph Visualization Tokens (Porcelain) */
+  --graph-module: 71 85 105;        /* #475569 Folder / Module */
+  --graph-file: 37 99 235;          /* #2563EB Source File */
+  --graph-function: 109 40 217;     /* #6D28D9 Function / Method */
+  --graph-class: 180 83 9;          /* #B45309 Class */
+  --graph-interface: 15 118 110;    /* #0F766E Interface / Type */
+  --graph-test: 21 128 61;          /* #15803D Test */
+  --graph-package: 190 24 93;       /* #BE185D External Package */
+  --graph-route: 194 65 12;         /* #C2410C API / Route */
 }

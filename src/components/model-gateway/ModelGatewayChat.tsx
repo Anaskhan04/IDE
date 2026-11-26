@@ -1,12 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRightLeft,
   AtSign,
   Check,
   ChevronDown,
   ChevronRight,
   Copy,
-  Cpu,
   Eye,
   FileCode,
   FolderPlus,
@@ -21,16 +19,12 @@ import {
 } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 import { isSensitiveFilePath } from '../../utils/aiContextBuilder';
+import { getWorkspaceDragId, parseWorkspaceDragPayload } from '../../utils/workspaceDragDrop';
 import type { AIGeneratedFile } from '../../types/ide';
+import { Badge, Button, IconButton, Input, Menu, Tabs } from '../ui';
 
-type ContextTab = 'assistant' | 'impact';
+type AssistantTab = 'assistant' | 'impact';
 
-const formatTokens = (tokens?: number) =>
-  tokens ? (tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens)) : '0';
-
-/**
- * Compute simple line-by-line diff preview between existing workspace file and AI-generated content.
- */
 function buildSimpleDiffLines(oldText: string, newText: string): { type: 'same' | 'add' | 'del'; text: string }[] {
   const oldLines = oldText.split('\n');
   const newLines = newText.split('\n');
@@ -64,18 +58,18 @@ const CodeBlockWithCopy: React.FC<{ language: string; code: string }> = ({ langu
 
   return (
     <div className="my-2 overflow-hidden rounded-ide-control border border-ide-border bg-ide-code">
-      <div className="flex items-center justify-between border-b border-ide-border bg-ide-shell px-2.5 py-1 font-mono text-[10px] text-ide-muted">
-        <span>{language || 'code'}</span>
+      <div className="flex items-center justify-between border-b border-ide-border bg-ide-shell px-3 py-1 font-sans text-[11px] text-ide-muted">
+        <span className="font-mono">{language || 'code'}</span>
         <button
           type="button"
           onClick={handleCopy}
-          className="ide-focus-ring inline-flex items-center gap-1 rounded-ide-control px-1.5 py-0.5 text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+          className="ide-focus-ring inline-flex items-center gap-1 rounded-ide-small px-1.5 py-0.5 text-[11px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
         >
           {copied ? <Check className="h-3 w-3 text-ide-emerald" /> : <Copy className="h-3 w-3" />}
           <span>{copied ? 'Copied' : 'Copy'}</span>
         </button>
       </div>
-      <pre className="max-h-60 overflow-auto p-2.5 font-mono text-[11px] leading-relaxed text-ide-text select-text">
+      <pre className="max-h-64 overflow-auto p-3 font-mono text-[13px] leading-relaxed text-ide-text select-text">
         <code>{code}</code>
       </pre>
     </div>
@@ -102,12 +96,12 @@ const MessageContentRenderer: React.FC<{ content: string }> = ({ content }) => {
   }, [content]);
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2 font-sans text-[13px] leading-relaxed text-ide-text">
       {parts.map((p, idx) =>
         p.kind === 'code' ? (
           <CodeBlockWithCopy key={idx} language={p.lang} code={p.code} />
         ) : (
-          <p key={idx} className="whitespace-pre-wrap break-words leading-relaxed">
+          <p key={idx} className="whitespace-pre-wrap break-words">
             {p.text}
           </p>
         )
@@ -125,10 +119,13 @@ export const ModelGatewayChat: React.FC = () => {
     isGeneratingAI,
     applyGeneratedFiles,
     activeModel,
+    setActiveModel,
+    allModels,
     configuredProviders,
     providerStatuses,
     setApiKey,
     setIsModelSwitchingModalOpen,
+    setIsCopilotOpen,
     setActiveView,
     runTests,
     isExecutingTests,
@@ -141,15 +138,17 @@ export const ModelGatewayChat: React.FC = () => {
     setAttachedContextPaths,
     selectedEditorCode,
     lastContextBundle,
+    workspacePath,
   } = useIDE();
 
   const [inputMessage, setInputMessage] = useState('');
-  const [activeTab, setActiveTab] = useState<ContextTab>('assistant');
+  const [activeTab, setActiveTab] = useState<AssistantTab>('assistant');
   const [inlineKeyDraft, setInlineKeyDraft] = useState('');
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showContextDetails, setShowContextDetails] = useState(false);
   const [previewDiffKey, setPreviewDiffKey] = useState<string | null>(null);
   const [decisionMap, setDecisionMap] = useState<Record<string, 'accepted' | 'rejected'>>({});
+  const [aiDropState, setAiDropState] = useState<'idle' | 'valid' | 'invalid'>('idle');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesPanelRef = useRef<HTMLDivElement>(null);
@@ -169,6 +168,11 @@ export const ModelGatewayChat: React.FC = () => {
   const safeAttachableFiles = useMemo(
     () => files.filter((f) => !isSensitiveFilePath(f.path)),
     [files]
+  );
+
+  const visibleMessages = useMemo(
+    () => chatMessages.filter((m) => m.id !== 'msg-init' && m.sender !== 'system' && !m.content.startsWith('[SYSTEM EVENT:')),
+    [chatMessages]
   );
 
   const handleSend = (event: React.FormEvent) => {
@@ -214,126 +218,364 @@ export const ModelGatewayChat: React.FC = () => {
     );
   };
 
+  const statusBadge = needsKeyNow ? (
+    <Badge variant="warning">Not configured</Badge>
+  ) : pStatus === 'connected' ? (
+    <Badge variant="success">Connected</Badge>
+  ) : activeModel.requiresApiKey === false ? (
+    <Badge variant="accent">Local</Badge>
+  ) : (
+    <Badge variant="neutral">Configured</Badge>
+  );
+
   return (
     <aside
-      className="flex h-full w-[372px] max-w-[46vw] shrink-0 flex-col border-l border-ide-border bg-ide-sidebar max-[1100px]:absolute max-[1100px]:inset-y-0 max-[1100px]:right-0 max-[1100px]:z-40 max-[1100px]:w-[min(372px,88vw)]"
+      className="flex h-full w-full flex-col bg-ide-panel font-sans"
       data-purpose="context-inspector"
     >
-      <div className="shrink-0 border-b border-ide-border bg-ide-panel">
-        <div className="flex h-12 items-center justify-between px-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-semibold text-ide-strong">
-              <Sparkles className="h-3.5 w-3.5 text-ide-cyan" aria-hidden="true" />
-              <span>AI Assistant</span>
-              {needsKeyNow ? (
-                <span className="rounded border border-ide-amber/40 bg-ide-amber/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-amber">
-                  Key Needed
-                </span>
-              ) : pStatus === 'connected' ? (
-                <span className="rounded border border-ide-emerald/40 bg-ide-emerald/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-emerald">
-                  Connected
-                </span>
-              ) : activeModel.requiresApiKey === false ? (
-                <span className="rounded border border-ide-cyan/40 bg-ide-cyan/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-cyan">
-                  Local
-                </span>
-              ) : (
-                <span className="rounded border border-ide-cyan/40 bg-ide-cyan/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-cyan">
-                  Configured
-                </span>
-              )}
-            </div>
-            <div className="mt-0.5 truncate font-mono text-[10px] text-ide-muted">
-              {activeModel.name} · {activeModel.provider}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsModelSwitchingModalOpen(true)}
-            className="ide-focus-ring flex items-center gap-1 rounded-ide-control border border-ide-border-strong bg-ide-surface px-2 py-1 font-mono text-[10px] text-ide-text hover:bg-ide-hover"
-            title="Switch Model or Configure API Keys"
-          >
-            <ArrowRightLeft className="h-3 w-3 text-ide-cyan" aria-hidden="true" />
-            <span>Models</span>
-          </button>
+      {/* Simple Assistant Header */}
+      <header className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-ide-border bg-ide-shell px-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Sparkles className="h-4 w-4 shrink-0 text-ide-purple" aria-hidden="true" />
+          <span className="text-[14px] font-semibold text-ide-strong">Assistant</span>
+          {statusBadge}
         </div>
+        <IconButton size="sm" label="Close Assistant" onClick={() => setIsCopilotOpen(false)}>
+          <X className="h-4 w-4" aria-hidden="true" />
+        </IconButton>
+      </header>
 
-        <div className="grid grid-cols-2 border-t border-ide-border text-[11px] font-medium" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'assistant'}
-            onClick={() => setActiveTab('assistant')}
-            className={`ide-focus-ring border-r border-ide-border py-2 transition-colors ${
-              activeTab === 'assistant'
-                ? 'bg-ide-selected text-ide-strong'
-                : 'text-ide-muted hover:bg-ide-hover hover:text-ide-text'
-            }`}
-          >
-            AI Chat ({chatMessages.length})
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'impact'}
-            onClick={() => setActiveTab('impact')}
-            className={`ide-focus-ring py-2 transition-colors ${
-              activeTab === 'impact'
-                ? 'bg-ide-selected text-ide-strong'
-                : 'text-ide-muted hover:bg-ide-hover hover:text-ide-text'
-            }`}
-          >
-            Blast Radius ({ciaResult.directAffected.length})
-          </button>
-        </div>
-      </div>
+      <Tabs
+        ariaLabel="Assistant views"
+        activeId={activeTab}
+        onChange={(id) => setActiveTab(id as AssistantTab)}
+        items={[
+          { id: 'assistant', label: 'Chat', badge: visibleMessages.length > 0 ? visibleMessages.length : undefined },
+          { id: 'impact', label: 'Impact', badge: ciaResult.directAffected.length > 0 ? ciaResult.directAffected.length : undefined },
+        ]}
+      />
 
       {activeTab === 'assistant' ? (
         <>
-          {/* Visible Context Summary Bar */}
-          <div className="shrink-0 border-b border-ide-border bg-ide-surface/50 px-3 py-1.5 text-[10px] font-mono">
-            <div className="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => setShowContextDetails((v) => !v)}
-                className="flex items-center gap-1 text-ide-muted hover:text-ide-text"
-              >
-                {showContextDetails ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                <span>
-                  Context: {activeFile ? activeFile.name : 'None'}
-                  {attachedContextPaths.length > 0 ? ` + ${attachedContextPaths.length} @file` : ''}
-                  {selectedEditorCode ? ' · Selection' : ''}
+          {/* Conversation Stream */}
+          <div ref={messagesPanelRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4 select-text">
+            {visibleMessages.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center text-center px-2">
+                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-ide-panel border border-ide-border bg-ide-surface text-ide-purple">
+                  <Sparkles className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <h2 className="text-[14px] font-semibold text-ide-strong">Ask about your workspace</h2>
+                <p className="mt-1 max-w-[260px] text-[12px] text-ide-muted">
+                  {needsKeyNow
+                    ? `Configure a ${activeModel.provider} API key or choose another model to start.`
+                    : `Ready using ${activeModel.name}.`}
+                </p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {activeFile && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => sendChatMessage(`Explain ${activeFile.path} and point out any edge cases.`)}
+                    >
+                      Explain {activeFile.name}
+                    </Button>
+                  )}
+                  {diagnostics.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => sendChatMessage('Fix current errors in the workspace files.')}
+                    >
+                      Fix {diagnostics.length} problem{diagnostics.length > 1 ? 's' : ''}
+                    </Button>
+                  )}
+                  {needsKeyNow && (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={() => setIsModelSwitchingModalOpen(true)}
+                    >
+                      Configure provider
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {visibleMessages.map((message) => {
+                  const isUser = message.sender === 'user';
+                  const genFiles = message.generatedFiles || [];
+
+                  return (
+                    <article
+                      key={message.id}
+                      className={`rounded-ide-panel border p-3 ${
+                        isUser
+                          ? 'border-ide-border bg-ide-surface'
+                          : message.isError
+                            ? 'border-ide-rose/40 bg-ide-rose/10'
+                            : 'border-ide-border bg-ide-bg'
+                      }`}
+                    >
+                      <div className="mb-1.5 flex items-center justify-between gap-2 text-[12px]">
+                        <span
+                          className={`font-semibold ${
+                            isUser ? 'text-ide-focus' : message.isError ? 'text-ide-rose' : 'text-ide-strong'
+                          }`}
+                        >
+                          {isUser ? 'You' : message.model || activeModel.name}
+                        </span>
+                        <span className="text-[11px] text-ide-subtle">{message.timestamp}</span>
+                      </div>
+
+                      <MessageContentRenderer content={message.content} />
+
+                      {message.needsApiKey && (
+                        <form
+                          onSubmit={handleSaveInlineKey}
+                          className="mt-3 rounded-ide-control border border-ide-amber/40 bg-ide-panel p-3 space-y-2"
+                        >
+                          <div className="flex items-center gap-1.5 text-[12px] font-medium text-ide-amber">
+                            <KeyRound className="h-4 w-4" aria-hidden="true" />
+                            <span>{message.needsApiKey.providerName} API key required</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="password"
+                              value={inlineKeyDraft}
+                              onChange={(e) => setInlineKeyDraft(e.target.value)}
+                              placeholder="Paste API key…"
+                              aria-label="Provider API key"
+                            />
+                            <Button type="submit" size="sm" variant="primary">
+                              Save
+                            </Button>
+                          </div>
+                        </form>
+                      )}
+
+                      {genFiles.length > 0 && (
+                        <div className="mt-3 rounded-ide-control border border-ide-borderStrong bg-ide-surface p-3 space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[12px] font-semibold text-ide-strong">
+                              {genFiles.length} proposed file change{genFiles.length > 1 ? 's' : ''}
+                            </span>
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              leftIcon={<FolderPlus className="h-3.5 w-3.5" />}
+                              onClick={() => handleAcceptAll(message.id, genFiles)}
+                            >
+                              Accept all
+                            </Button>
+                          </div>
+
+                          <div className="space-y-2">
+                            {genFiles.map((gf) => {
+                              const key = `${message.id}:${gf.path}`;
+                              const decision = decisionMap[key];
+                              const existing = files.find((f) => f.path === gf.path);
+                              const isPreviewing = previewDiffKey === key;
+
+                              return (
+                                <div key={gf.path} className="rounded-ide-control border border-ide-border bg-ide-bg p-2.5 space-y-2">
+                                  <div className="flex items-center justify-between gap-2 text-[12px]">
+                                    <div className="flex min-w-0 items-center gap-1.5">
+                                      <FileCode className="h-4 w-4 shrink-0 text-ide-cyan" aria-hidden="true" />
+                                      <span className="truncate font-mono text-ide-text">{gf.path}</span>
+                                      <Badge variant="neutral">{existing ? 'modify' : 'new'}</Badge>
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-1">
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        leftIcon={<Eye className="h-3.5 w-3.5" />}
+                                        onClick={() => setPreviewDiffKey(isPreviewing ? null : key)}
+                                      >
+                                        Diff
+                                      </Button>
+                                      {decision === 'accepted' ? (
+                                        <Badge variant="success">Applied</Badge>
+                                      ) : decision === 'rejected' ? (
+                                        <Badge variant="error">Rejected</Badge>
+                                      ) : (
+                                        <>
+                                          <Button
+                                            size="sm"
+                                            variant="secondary"
+                                            onClick={() => handleAcceptFile(message.id, gf)}
+                                          >
+                                            Accept
+                                          </Button>
+                                          <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            onClick={() => handleRejectFile(message.id, gf)}
+                                          >
+                                            Reject
+                                          </Button>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {isPreviewing && (
+                                    <div className="max-h-44 overflow-auto rounded-ide-small border border-ide-border bg-ide-code p-2 font-mono text-[12px]">
+                                      {buildSimpleDiffLines(existing?.content || '', gf.content).map((ln, idx) => (
+                                        <div
+                                          key={idx}
+                                          className={
+                                            ln.type === 'add'
+                                              ? 'bg-ide-emerald/15 text-ide-emerald'
+                                              : ln.type === 'del'
+                                                ? 'bg-ide-rose/15 text-ide-rose'
+                                                : 'text-ide-subtle'
+                                          }
+                                        >
+                                          {ln.type === 'add' ? '+ ' : ln.type === 'del' ? '- ' : '  '}
+                                          {ln.text}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {message.suggestedAction?.type === 'run_tests' && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="mt-2.5"
+                          leftIcon={<Play className="h-3.5 w-3.5" />}
+                          disabled={isExecutingTests}
+                          onClick={() => runTests()}
+                        >
+                          {isExecutingTests ? 'Running tests…' : message.suggestedAction.label}
+                        </Button>
+                      )}
+                    </article>
+                  );
+                })}
+
+                {isGeneratingAI && (
+                  <div className="flex items-center justify-between rounded-ide-control border border-ide-border bg-ide-surface px-3 py-2 text-[12px] text-ide-muted">
+                    <span className="animate-pulse">Generating with {activeModel.name}…</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      leftIcon={<Square className="h-3 w-3" />}
+                      onClick={stopAIGeneration}
+                    >
+                      Stop
+                    </Button>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+          </div>
+
+          {/* Prompt Composer & Context Chips (also accepts Explorer / Graph DnD attachments without auto-sending) */}
+          <div
+            data-testid="ai-context-drop-zone"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setAiDropState('valid');
+            }}
+            onDragLeave={() => setAiDropState('idle')}
+            onDrop={(e) => {
+              e.preventDefault();
+              setAiDropState('idle');
+              const parsed = parseWorkspaceDragPayload(
+                e.dataTransfer,
+                getWorkspaceDragId(workspacePath),
+                files,
+                { rejectSensitive: true },
+              );
+              if (!parsed.valid) {
+                setAiDropState('invalid');
+                window.setTimeout(() => setAiDropState('idle'), 1600);
+                return;
+              }
+              const targetPath = parsed.file?.path || parsed.payload.filePath;
+              if (targetPath) {
+                setAttachedContextPaths((prev) => (prev.includes(targetPath) ? prev : [...prev, targetPath]));
+              }
+            }}
+            className={`shrink-0 border-t border-ide-border bg-ide-shell p-3 space-y-2.5 transition-colors ${
+              aiDropState === 'valid'
+                ? 'ring-2 ring-inset ring-ide-focus'
+                : aiDropState === 'invalid'
+                  ? 'ring-2 ring-inset ring-ide-rose'
+                  : ''
+            }`}
+          >
+            {/* Compact Context Chips + Inspector */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {activeFile && (
+                <Badge variant="neutral" className="max-w-[160px] truncate font-mono">
+                  {activeFile.name}
+                </Badge>
+              )}
+              {selectedEditorCode && <Badge variant="accent">Selection</Badge>}
+              {attachedContextPaths.map((p) => (
+                <span
+                  key={p}
+                  className="inline-flex max-w-[180px] items-center gap-1 rounded-ide-small border border-ide-borderStrong bg-ide-surface px-2 py-0.5 font-mono text-[11px] text-ide-text"
+                >
+                  <span className="truncate">{p}</span>
+                  <button
+                    type="button"
+                    onClick={() => toggleAttachPath(p)}
+                    className="ide-focus-ring rounded-ide-small text-ide-subtle hover:text-ide-text"
+                    aria-label={`Remove ${p} from project context`}
+                  >
+                    <X className="h-3 w-3" aria-hidden="true" />
+                  </button>
                 </span>
-              </button>
+              ))}
               <button
                 type="button"
                 onClick={() => setShowAttachMenu((v) => !v)}
-                className="ide-focus-ring inline-flex items-center gap-1 rounded-ide-control border border-ide-border bg-ide-bg px-1.5 py-0.5 text-[10px] text-ide-cyan hover:bg-ide-hover"
-                title="Attach workspace files (@file)"
+                className="ide-focus-ring inline-flex h-6 items-center gap-1 rounded-ide-small border border-ide-border bg-ide-bg px-2 text-[11px] font-medium text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+                title="Attach workspace files to project context"
               >
-                <AtSign className="h-2.5 w-2.5" />
-                <span>@file</span>
+                <AtSign className="h-3 w-3" aria-hidden="true" />
+                <span>Add file</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowContextDetails((v) => !v)}
+                className="ide-focus-ring ml-auto inline-flex h-6 items-center gap-1 rounded-ide-small px-1.5 text-[11px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+                aria-expanded={showContextDetails}
+              >
+                {showContextDetails ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                <span>Project context</span>
               </button>
             </div>
 
             {showAttachMenu && (
-              <div className="mt-2 max-h-32 overflow-y-auto rounded-ide-control border border-ide-border bg-ide-bg p-1.5 space-y-0.5">
+              <div className="max-h-32 overflow-y-auto rounded-ide-control border border-ide-borderStrong bg-ide-bg p-1.5 space-y-0.5">
                 {safeAttachableFiles.length === 0 ? (
-                  <div className="px-1.5 py-1 text-ide-subtle">No non-sensitive files available.</div>
+                  <div className="px-2 py-1 text-[12px] text-ide-subtle">No attachable files available.</div>
                 ) : (
                   safeAttachableFiles.map((f) => {
                     const checked = attachedContextPaths.includes(f.path);
                     return (
                       <label
                         key={f.id}
-                        className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] text-ide-text hover:bg-ide-hover"
+                        className="flex cursor-pointer items-center gap-2 rounded-ide-small px-2 py-1 text-[12px] text-ide-text hover:bg-ide-hover"
                       >
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={() => toggleAttachPath(f.path)}
                         />
-                        <span className="truncate">{f.path}</span>
+                        <span className="truncate font-mono">{f.path}</span>
                       </label>
                     );
                   })
@@ -342,298 +584,32 @@ export const ModelGatewayChat: React.FC = () => {
             )}
 
             {showContextDetails && (
-              <div className="mt-1.5 space-y-1 border-t border-ide-border pt-1.5 text-[10px]">
+              <div className="rounded-ide-control border border-ide-border bg-ide-bg p-2.5 text-[12px] space-y-1">
                 {lastContextBundle ? (
                   <>
-                    <div className="text-ide-subtle">Included in last request:</div>
+                    <div className="font-medium text-ide-muted">Included in last request:</div>
                     {lastContextBundle.includedFiles.map((inc) => (
                       <div key={inc.path} className="flex justify-between gap-2 text-ide-text">
-                        <span className="truncate">{inc.path}</span>
+                        <span className="truncate font-mono">{inc.path}</span>
                         <span className="shrink-0 text-ide-cyan">{inc.reason}</span>
                       </div>
                     ))}
                     {lastContextBundle.excludedSensitive.length > 0 && (
                       <div className="flex items-center gap-1 text-ide-amber">
-                        <ShieldAlert className="h-3 w-3 shrink-0" />
+                        <ShieldAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                         <span>Excluded {lastContextBundle.excludedSensitive.length} sensitive file(s)</span>
                       </div>
                     )}
                   </>
                 ) : (
-                  <div className="text-ide-subtle">Send a prompt to inspect AST &amp; graph context selection.</div>
+                  <div className="text-ide-subtle">Send a prompt to inspect selected project context.</div>
                 )}
               </div>
             )}
-          </div>
-
-          <div ref={messagesPanelRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3 select-text">
-            <div className="space-y-4">
-              {chatMessages.map((message) => {
-                const isUser = message.sender === 'user';
-                const isSystem = message.sender === 'system' || message.content.startsWith('[SYSTEM EVENT:');
-                const genFiles = message.generatedFiles || [];
-
-                if (isSystem) {
-                  return (
-                    <div
-                      key={message.id}
-                      className="border-l-2 border-ide-border-strong pl-2.5 font-mono text-[10px] leading-relaxed text-ide-subtle"
-                    >
-                      {message.content.replace('[SYSTEM EVENT:', '').replace(']', '').trim()}
-                    </div>
-                  );
-                }
-
-                return (
-                  <article
-                    key={message.id}
-                    className={`border-l-2 pl-3 text-xs ${
-                      isUser
-                        ? 'border-ide-focus'
-                        : message.isError
-                          ? 'border-ide-rose'
-                          : 'border-ide-cyan'
-                    }`}
-                  >
-                    <div className="mb-1 flex items-center justify-between gap-2 font-mono text-[10px]">
-                      <span
-                        className={
-                          isUser
-                            ? 'text-ide-focus font-semibold'
-                            : message.isError
-                              ? 'text-ide-rose font-semibold'
-                              : 'text-ide-cyan font-semibold'
-                        }
-                      >
-                        {isUser ? 'You' : message.model || activeModel.name}
-                      </span>
-                      <span className="text-ide-subtle">{message.timestamp}</span>
-                    </div>
-
-                    <div className="text-ide-text">
-                      <MessageContentRenderer content={message.content} />
-                    </div>
-
-                    {/* Inline API Key Prompt if key missing */}
-                    {message.needsApiKey && (
-                      <form
-                        onSubmit={handleSaveInlineKey}
-                        className="mt-2.5 rounded-ide-control border border-ide-amber/40 bg-ide-panel p-2.5 space-y-2"
-                      >
-                        <div className="flex items-center gap-1.5 font-mono text-[10px] text-ide-amber">
-                          <KeyRound className="h-3 w-3" />
-                          <span>Enter {message.needsApiKey.providerName} API Key (stored on backend):</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="password"
-                            value={inlineKeyDraft}
-                            onChange={(e) => setInlineKeyDraft(e.target.value)}
-                            placeholder="Paste API key…"
-                            className="min-w-0 flex-1 rounded-ide-control border border-ide-border-strong bg-ide-bg px-2 py-1 font-mono text-[11px] text-ide-strong outline-none"
-                          />
-                          <button
-                            type="submit"
-                            className="rounded-ide-control bg-ide-focus px-2.5 py-1 font-mono text-[10px] font-semibold text-ide-strong"
-                          >
-                            Save
-                          </button>
-                        </div>
-                      </form>
-                    )}
-
-                    {/* Generated Files Diff Preview & Accept/Reject Controls */}
-                    {genFiles.length > 0 && (
-                      <div className="mt-3 rounded-ide-panel border border-ide-emerald/40 bg-ide-panel p-2.5 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono text-[10px] font-semibold text-ide-emerald">
-                            {genFiles.length} Proposed File Change{genFiles.length > 1 ? 's' : ''}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleAcceptAll(message.id, genFiles)}
-                            className="ide-focus-ring inline-flex items-center gap-1 rounded-ide-control bg-ide-emerald px-2.5 py-1 font-mono text-[10px] font-semibold text-ide-shell hover:bg-ide-emerald/90"
-                          >
-                            <FolderPlus className="h-3 w-3" />
-                            Accept All
-                          </button>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          {genFiles.map((gf) => {
-                            const key = `${message.id}:${gf.path}`;
-                            const decision = decisionMap[key];
-                            const existing = files.find((f) => f.path === gf.path);
-                            const isPreviewing = previewDiffKey === key;
-
-                            return (
-                              <div key={gf.path} className="rounded-ide-control border border-ide-border bg-ide-bg p-2 space-y-1.5">
-                                <div className="flex items-center justify-between gap-2 font-mono text-[10px]">
-                                  <div className="flex min-w-0 items-center gap-1.5">
-                                    <FileCode className="h-3 w-3 shrink-0 text-ide-cyan" />
-                                    <span className="truncate text-ide-text">{gf.path}</span>
-                                    <span className="shrink-0 text-ide-subtle">
-                                      {existing ? 'modify' : 'new'}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    <button
-                                      type="button"
-                                      onClick={() => setPreviewDiffKey(isPreviewing ? null : key)}
-                                      className="rounded border border-ide-border px-1.5 py-0.5 text-[9px] text-ide-muted hover:text-ide-text"
-                                      title="Preview diff"
-                                    >
-                                      <Eye className="inline h-2.5 w-2.5 mr-0.5" />
-                                      Diff
-                                    </button>
-                                    {decision === 'accepted' ? (
-                                      <span className="text-ide-emerald font-semibold">Applied</span>
-                                    ) : decision === 'rejected' ? (
-                                      <span className="text-ide-rose">Rejected</span>
-                                    ) : (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleAcceptFile(message.id, gf)}
-                                          className="rounded bg-ide-emerald/20 px-1.5 py-0.5 text-[9px] text-ide-emerald hover:bg-ide-emerald/30"
-                                        >
-                                          Accept
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleRejectFile(message.id, gf)}
-                                          className="rounded bg-ide-rose/20 px-1.5 py-0.5 text-[9px] text-ide-rose hover:bg-ide-rose/30"
-                                        >
-                                          Reject
-                                        </button>
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {isPreviewing && (
-                                  <div className="max-h-40 overflow-auto rounded border border-ide-border bg-ide-code p-1.5 font-mono text-[10px]">
-                                    {buildSimpleDiffLines(existing?.content || '', gf.content).map((ln, idx) => (
-                                      <div
-                                        key={idx}
-                                        className={
-                                          ln.type === 'add'
-                                            ? 'bg-ide-emerald/15 text-ide-emerald'
-                                            : ln.type === 'del'
-                                              ? 'bg-ide-rose/15 text-ide-rose'
-                                              : 'text-ide-subtle'
-                                        }
-                                      >
-                                        {ln.type === 'add' ? '+ ' : ln.type === 'del' ? '- ' : '  '}
-                                        {ln.text}
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {!isUser && message.tokensUsed ? (
-                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-ide-border pt-2 font-mono text-[10px] text-ide-subtle">
-                        <span>Provider tokens: {formatTokens(message.tokensUsed)}</span>
-                      </div>
-                    ) : null}
-
-                    {message.suggestedAction?.type === 'run_tests' && (
-                      <button
-                        type="button"
-                        onClick={() => runTests()}
-                        disabled={isExecutingTests}
-                        className="ide-focus-ring mt-2 inline-flex items-center gap-1 rounded-ide-control bg-ide-emerald px-2.5 py-1 font-mono text-[10px] font-semibold text-ide-shell hover:bg-ide-emerald/85 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Play className="h-3 w-3" aria-hidden="true" />
-                        {isExecutingTests ? 'Running tests' : message.suggestedAction.label}
-                      </button>
-                    )}
-                  </article>
-                );
-              })}
-
-              {isGeneratingAI && (
-                <div className="flex items-center justify-between border-l-2 border-ide-cyan pl-3 font-mono text-[11px] text-ide-muted">
-                  <span className="animate-pulse">Generating with {activeModel.name}…</span>
-                  <button
-                    type="button"
-                    onClick={stopAIGeneration}
-                    className="inline-flex items-center gap-1 rounded-ide-control border border-ide-rose/40 bg-ide-rose/10 px-2 py-0.5 text-[10px] text-ide-rose hover:bg-ide-rose/20"
-                  >
-                    <Square className="h-2.5 w-2.5" />
-                    Stop
-                  </button>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-          </div>
-
-          {/* Quick Prompts + Composer */}
-          <div className="shrink-0 border-t border-ide-border bg-ide-panel p-3 space-y-2">
-            <div className="flex flex-wrap gap-1.5">
-              {selectedEditorCode && (
-                <button
-                  type="button"
-                  onClick={() => sendChatMessage('Explain the selected code and point out any edge cases.')}
-                  disabled={isGeneratingAI}
-                  className="rounded-ide-control border border-ide-cyan/40 bg-ide-cyan/10 px-2 py-0.5 font-mono text-[10px] text-ide-cyan hover:bg-ide-cyan/20 disabled:opacity-50"
-                >
-                  Explain Selection
-                </button>
-              )}
-              {activeFile && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => sendChatMessage(`Find bugs and suggest fixes in ${activeFile.path}.`)}
-                    disabled={isGeneratingAI}
-                    className="rounded-ide-control border border-ide-border bg-ide-surface px-2 py-0.5 font-mono text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-text disabled:opacity-50"
-                  >
-                    Find Bugs
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => sendChatMessage(`Explain dependencies and change impact for ${activeFile.path}.`)}
-                    disabled={isGeneratingAI}
-                    className="rounded-ide-control border border-ide-border bg-ide-surface px-2 py-0.5 font-mono text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-text disabled:opacity-50"
-                  >
-                    Dependencies
-                  </button>
-                </>
-              )}
-              {diagnostics.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => sendChatMessage('Fix all current diagnostics/errors in the workspace files.')}
-                  disabled={isGeneratingAI}
-                  className="rounded-ide-control border border-ide-rose/40 bg-ide-rose/10 px-2 py-0.5 font-mono text-[10px] text-ide-rose hover:bg-ide-rose/20 disabled:opacity-50"
-                >
-                  Fix {diagnostics.length} Problem{diagnostics.length > 1 ? 's' : ''}
-                </button>
-              )}
-              {!isGeneratingAI && chatMessages.some((m) => m.sender === 'user') && (
-                <button
-                  type="button"
-                  onClick={retryLastChatMessage}
-                  className="ml-auto inline-flex items-center gap-1 rounded-ide-control border border-ide-border bg-ide-surface px-2 py-0.5 font-mono text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
-                  title="Retry last prompt"
-                >
-                  <RotateCcw className="h-2.5 w-2.5" />
-                  Retry
-                </button>
-              )}
-            </div>
 
             <form
               onSubmit={handleSend}
-              className="flex items-center gap-2 rounded-ide-control border border-ide-border-strong bg-ide-surface px-2 focus-within:border-ide-focus"
+              className="rounded-ide-panel border border-ide-borderStrong bg-ide-bg p-2 space-y-2 focus-within:border-ide-focus"
             >
               <input
                 id="context-composer"
@@ -641,100 +617,127 @@ export const ModelGatewayChat: React.FC = () => {
                 value={inputMessage}
                 onChange={(event) => setInputMessage(event.target.value)}
                 disabled={isGeneratingAI}
-                placeholder={`Ask ${activeModel.name} about your code…`}
-                className="min-w-0 flex-1 bg-transparent py-2 text-xs text-ide-text outline-none placeholder:text-ide-subtle"
+                placeholder={`Ask ${activeModel.name}…`}
+                aria-label="Prompt composer"
+                className="w-full bg-transparent px-1 py-1 font-sans text-[13px] text-ide-text outline-none placeholder:text-ide-subtle"
               />
-              {isGeneratingAI ? (
-                <button
-                  type="button"
-                  onClick={stopAIGeneration}
-                  className="ide-focus-ring flex h-7 w-7 items-center justify-center rounded-ide-control bg-ide-rose text-ide-strong"
-                  aria-label="Stop generation"
-                >
-                  <Square className="h-3.5 w-3.5" />
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={!inputMessage.trim()}
-                  className="ide-focus-ring flex h-7 w-7 items-center justify-center rounded-ide-control bg-ide-focus text-ide-strong disabled:cursor-not-allowed disabled:opacity-40"
-                  aria-label="Send message"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                </button>
-              )}
+              <div className="flex items-center justify-between gap-2">
+                <Menu
+                  align="left"
+                  side="top"
+                  trigger={(props) => (
+                    <button
+                      type="button"
+                      onClick={props.toggle}
+                      aria-expanded={props['aria-expanded']}
+                      aria-haspopup={props['aria-haspopup']}
+                      className="ide-focus-ring inline-flex h-7 max-w-[200px] items-center gap-1.5 rounded-ide-control border border-ide-border bg-ide-surface px-2 text-[12px] text-ide-text hover:bg-ide-hover"
+                    >
+                      <span className="truncate">{activeModel.name}</span>
+                      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ide-subtle" aria-hidden="true" />
+                    </button>
+                  )}
+                  items={[
+                    ...allModels.slice(0, 8).map((m) => ({
+                      id: m.id,
+                      label: `${m.name} (${m.provider})`,
+                      selected: m.id === activeModel.id,
+                      onSelect: () => setActiveModel(m),
+                    })),
+                    {
+                      id: 'manage-providers',
+                      label: 'Manage models & providers…',
+                      onSelect: () => setIsModelSwitchingModalOpen(true),
+                    },
+                  ]}
+                />
+
+                <div className="flex items-center gap-1.5">
+                  {!isGeneratingAI && visibleMessages.some((m) => m.sender === 'user') && (
+                    <IconButton size="sm" label="Retry last prompt" onClick={retryLastChatMessage}>
+                      <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                    </IconButton>
+                  )}
+                  {isGeneratingAI ? (
+                    <IconButton size="sm" variant="danger" label="Stop generation" onClick={stopAIGeneration}>
+                      <Square className="h-3.5 w-3.5" aria-hidden="true" />
+                    </IconButton>
+                  ) : (
+                    <IconButton
+                      type="submit"
+                      size="sm"
+                      variant="primary"
+                      label="Send message"
+                      disabled={!inputMessage.trim()}
+                    >
+                      <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                    </IconButton>
+                  )}
+                </div>
+              </div>
             </form>
           </div>
         </>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-          <div className="mb-3 flex items-center justify-between border-b border-ide-border pb-3">
-            <div>
-              <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-ide-subtle">Impact score</div>
-              <div className="mt-1 font-mono text-2xl font-semibold tabular-nums text-ide-amber">
-                {ciaResult.blastRadiusScore}
-                <span className="text-xs text-ide-subtle"> / 100</span>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-5">
+          <div className="rounded-ide-panel border border-ide-border bg-ide-surface p-3.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[12px] text-ide-muted">Impact</div>
+                <div className="mt-0.5 text-[20px] font-semibold text-ide-strong">{ciaResult.blastRadiusScore}%</div>
               </div>
+              <Badge variant={ciaResult.severity === 'critical' || ciaResult.severity === 'high' ? 'error' : 'warning'}>
+                {ciaResult.severity}
+              </Badge>
             </div>
-            <button
-              type="button"
-              onClick={() => setActiveView('cia')}
-              className="ide-focus-ring inline-flex items-center gap-1 rounded-ide-control border border-ide-border-strong px-2.5 py-1.5 font-mono text-[10px] text-ide-text hover:bg-ide-hover"
-            >
-              Full simulator <ChevronRight className="h-3 w-3" />
-            </button>
+            <div className="mt-2 truncate font-mono text-[12px] text-ide-muted">{ciaResult.targetPath}</div>
           </div>
 
-          <div className="space-y-4">
-            <section>
-              <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ide-subtle">
-                Direct dependents
-              </h3>
-              <div className="divide-y divide-ide-border border-y border-ide-border">
-                {ciaResult.directAffected.map((item) => (
+          <div>
+            <h3 className="mb-2 text-[12px] font-semibold text-ide-muted">
+              Directly affected ({ciaResult.directAffected.length})
+            </h3>
+            <div className="space-y-1.5">
+              {ciaResult.directAffected.map((item) => {
+                const targetFile = files.find((f) => f.path === item.path || f.name === item.name);
+                return (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => {
-                      openFile(item.id);
-                      setActiveView('editor');
+                      if (targetFile) {
+                        openFile(targetFile.id);
+                        setActiveView('editor');
+                      }
                     }}
-                    className="ide-focus-ring flex w-full items-start gap-2.5 py-2.5 text-left hover:bg-ide-hover/60"
+                    className="ide-focus-ring flex w-full items-center justify-between rounded-ide-control border border-ide-border bg-ide-bg px-3 py-2 text-left text-[12px] hover:bg-ide-hover"
                   >
-                    <FileCode className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ide-amber" aria-hidden="true" />
-                    <div className="min-w-0">
-                      <div className="font-mono text-xs text-ide-text">{item.name}</div>
-                      <div className="mt-0.5 text-[11px] leading-relaxed text-ide-muted">{item.reason}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <h3 className="mb-2 font-mono text-[10px] uppercase tracking-[0.1em] text-ide-subtle">
-                Downstream impact
-              </h3>
-              <div className="divide-y divide-ide-border border-y border-ide-border">
-                {ciaResult.indirectAffected.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between py-2 text-xs">
                     <span className="truncate font-mono text-ide-text">{item.name}</span>
-                    <span className="font-mono text-[10px] text-ide-subtle">Depth {item.depth}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
+                    <span className="text-ide-focus">Open file</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="mb-2 text-[12px] font-semibold text-ide-muted">
+              Indirectly affected ({ciaResult.indirectAffected.length})
+            </h3>
+            <div className="space-y-1.5">
+              {ciaResult.indirectAffected.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between rounded-ide-control border border-ide-border bg-ide-bg px-3 py-2 text-[12px]"
+                >
+                  <span className="truncate font-mono text-ide-text">{item.name}</span>
+                  <span className="text-ide-muted">Depth {item.depth}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
-
-      <footer className="flex shrink-0 items-center justify-between border-t border-ide-border bg-ide-shell px-3 py-2 font-mono text-[10px] text-ide-subtle">
-        <span className="flex items-center gap-1.5">
-          <Cpu className="h-3 w-3 text-ide-cyan" aria-hidden="true" />
-          AST + Graph Context
-        </span>
-        <span>{files.length} files</span>
-      </footer>
     </aside>
   );
 };

@@ -27,6 +27,21 @@ import {
 import { gitService } from '../utils/gitService';
 import { githubService } from '../utils/githubService';
 import {
+  closeAllTabsState,
+  closeOtherTabsState,
+  closeSavedTabsState,
+  closeTabsToRightState,
+  closeTabState,
+  openTabState,
+  reconcileEditorTabs,
+} from '../utils/editorTabState';
+import {
+  GraphSessionState,
+  NavigationEntry,
+  createDefaultGraphSession,
+  pushNavigationHistory,
+} from '../utils/workspaceNavigation';
+import {
   ContextBundle,
   getBackendAiKeyStatuses,
   parseGeneratedFilesFromResponse,
@@ -214,6 +229,8 @@ interface IDEContextType {
   // Editor Preferences & Quick Operations
   editorSettings: EditorSettings;
   updateEditorSettings: (settings: Partial<EditorSettings>) => void;
+  appTheme: 'obsidian' | 'light';
+  setAppTheme: (theme: 'obsidian' | 'light') => void;
   targetEditorLine: number | null;
   setTargetEditorLine: (line: number | null) => void;
   saveAllFiles: () => Promise<void>;
@@ -270,6 +287,31 @@ interface IDEContextType {
   pushToGitHub: () => Promise<boolean>;
   pullFromGitHub: () => Promise<boolean>;
   switchBranch: (branch: string, create?: boolean) => Promise<boolean>;
+
+  // Knowledge Graph Session & Guide
+  graphSession: GraphSessionState;
+  setGraphSession: React.Dispatch<React.SetStateAction<GraphSessionState>>;
+  updateGraphSession: (partial: Partial<GraphSessionState> | ((prev: GraphSessionState) => GraphSessionState)) => void;
+  resetGraphSession: () => void;
+  isGraphGuideOpen: boolean;
+  setIsGraphGuideOpen: (open: boolean) => void;
+
+  // Workspace Navigation History (Back / Forward)
+  canGoBack: boolean;
+  canGoForward: boolean;
+  goBack: () => void;
+  goForward: () => void;
+  recordNavigation: (entry: NavigationEntry) => void;
+
+  // Editor Tab Management
+  pinnedFileIds: string[];
+  closedTabHistory: string[];
+  togglePinTab: (fileId: string) => void;
+  closeOtherTabs: (keepFileId: string) => void;
+  closeTabsToRight: (anchorFileId: string) => void;
+  closeSavedTabs: () => void;
+  closeAllTabs: (includePinned?: boolean) => void;
+  reopenClosedTab: () => void;
 }
 
 const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
@@ -283,8 +325,48 @@ const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
 const IDEContext = createContext<IDEContextType | undefined>(undefined);
 
 export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [activeView, setActiveView] = useState<ActiveView>('editor'); // Default to Code Editor (Knowledge Graph disabled)
+  const [activeView, setActiveViewState] = useState<ActiveView>('editor'); // Default to Code Editor (Knowledge Graph disabled)
   const [currentProjectId, setCurrentProjectIdState] = useState<ProjectId>('codebase-memory-mcp');
+
+  // Knowledge Graph persistent session state & guide dialog
+  const [graphSession, setGraphSession] = useState<GraphSessionState>(() => createDefaultGraphSession());
+  const [isGraphGuideOpen, setIsGraphGuideOpen] = useState<boolean>(false);
+  const updateGraphSession = (
+    partial: Partial<GraphSessionState> | ((prev: GraphSessionState) => GraphSessionState)
+  ) => {
+    setGraphSession((prev) =>
+      typeof partial === 'function' ? partial(prev) : { ...prev, ...partial }
+    );
+  };
+  const resetGraphSession = () => {
+    setGraphSession(createDefaultGraphSession());
+  };
+
+  // Workspace Navigation History (Back / Forward)
+  const [navHistory, setNavHistory] = useState<NavigationEntry[]>([{ view: 'editor' }]);
+  const [navIndex, setNavIndex] = useState<number>(0);
+  const isRestoringNavRef = useRef(false);
+
+  const recordNavigation = (entry: NavigationEntry) => {
+    if (isRestoringNavRef.current) return;
+    setNavHistory((prevHistory) => {
+      const next = pushNavigationHistory(prevHistory, navIndex, entry);
+      setNavIndex(next.index);
+      return next.history;
+    });
+  };
+
+  const setActiveView = (view: ActiveView) => {
+    setActiveViewState(view);
+    if (!isRestoringNavRef.current) {
+      recordNavigation({
+        view,
+        fileId: view === 'editor' ? activeFileId || undefined : undefined,
+        graphNodeId: view === 'graph' ? graphSession.selectedNodeId ?? undefined : undefined,
+        scopedGroupKey: view === 'graph' ? graphSession.scopedGroupKey ?? undefined : undefined,
+      });
+    }
+  };
   
   // Multi-view sidebar & visibility
   const [sidebarView, setSidebarView] = useState<SidebarView>('explorer');
@@ -347,6 +429,8 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [activeFileId, setActiveFileId] = useState<string>('');
   const [openFileIds, setOpenFileIds] = useState<string[]>([]);
+  const [pinnedFileIds, setPinnedFileIds] = useState<string[]>([]);
+  const [closedTabHistory, setClosedTabHistory] = useState<string[]>([]);
 
   // AI Models, Custom Providers, and API Keys (persisted locally)
   const [customModels, setCustomModels] = useState<AIModel[]>(() => {
@@ -561,18 +645,32 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => clearTimeout(timer);
   }, [files]);
 
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      id: 'msg-init',
-      sender: 'assistant',
-      model: activeModel.name,
-      content: 'AI Coding Assistant ready. Select any model (Gemini, Claude, GPT-4o, DeepSeek, or Custom Provider), configure an API key when ready, and ask me to explain code, fix errors, or build a complete project.',
-      timestamp: 'Just now',
-      tokensUsed: 0,
-      tokensSaved: 0,
-      contextContinuity: true
+  const [appTheme, setAppThemeState] = useState<'obsidian' | 'light'>(() => {
+    try {
+      const saved = localStorage.getItem('intellicode-theme');
+      if (saved === 'light' || saved === 'obsidian') return saved;
+    } catch {
+      // ignore storage failure
     }
-  ]);
+    return 'obsidian';
+  });
+
+  const setAppTheme = (next: 'obsidian' | 'light') => {
+    setAppThemeState(next);
+    try {
+      localStorage.setItem('intellicode-theme', next);
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.classList.toggle('light', appTheme === 'light');
+    document.documentElement.classList.toggle('dark', appTheme !== 'light');
+  }, [appTheme]);
+
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const setCurrentProjectId = (id: ProjectId) => {
     setCurrentProjectIdState(id);
@@ -655,19 +753,163 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const openFile = (fileId: string) => {
-    if (!openFileIds.includes(fileId)) {
-      setOpenFileIds(prev => [...prev, fileId]);
+    const next = openTabState(files, openFileIds, fileId, pinnedFileIds);
+    setOpenFileIds(next.openFileIds);
+    setActiveFileId(next.activeFileId);
+    setActiveViewState('editor');
+    if (next.activeFileId) {
+      recordNavigation({ view: 'editor', fileId: next.activeFileId });
     }
-    setActiveFileId(fileId);
   };
 
   const closeFile = (fileId: string) => {
-    const nextOpen = openFileIds.filter(id => id !== fileId);
-    setOpenFileIds(nextOpen);
-    if (activeFileId === fileId) {
-      setActiveFileId(nextOpen.length > 0 ? nextOpen[nextOpen.length - 1] : '');
+    if (openFileIds.includes(fileId)) {
+      setClosedTabHistory((prev) => [fileId, ...prev.filter((id) => id !== fileId)].slice(0, 20));
+    }
+    setPinnedFileIds((prev) => prev.filter((id) => id !== fileId));
+    const next = closeTabState(files, openFileIds, activeFileId, fileId, pinnedFileIds);
+    setOpenFileIds(next.openFileIds);
+    setActiveFileId(next.activeFileId);
+  };
+
+  const togglePinTab = (fileId: string) => {
+    setPinnedFileIds((prev) => {
+      const exists = prev.includes(fileId);
+      const nextPinned = exists ? prev.filter((id) => id !== fileId) : [...prev, fileId];
+      const reconciled = reconcileEditorTabs(files, openFileIds, activeFileId, nextPinned);
+      setOpenFileIds(reconciled.openFileIds);
+      return nextPinned;
+    });
+  };
+
+  const closeOtherTabs = (keepFileId: string) => {
+    const closingIds = openFileIds.filter((id) => id !== keepFileId && !pinnedFileIds.includes(id));
+    if (closingIds.length > 0) {
+      setClosedTabHistory((prev) => [...closingIds.reverse(), ...prev.filter((id) => !closingIds.includes(id))].slice(0, 20));
+    }
+    const next = closeOtherTabsState(files, openFileIds, keepFileId, pinnedFileIds);
+    setOpenFileIds(next.openFileIds);
+    setActiveFileId(next.activeFileId);
+  };
+
+  const closeTabsToRight = (anchorFileId: string) => {
+    const next = closeTabsToRightState(files, openFileIds, activeFileId, anchorFileId, pinnedFileIds);
+    const closingIds = openFileIds.filter((id) => !next.openFileIds.includes(id));
+    if (closingIds.length > 0) {
+      setClosedTabHistory((prev) => [...closingIds.reverse(), ...prev.filter((id) => !closingIds.includes(id))].slice(0, 20));
+    }
+    setOpenFileIds(next.openFileIds);
+    setActiveFileId(next.activeFileId);
+  };
+
+  const closeSavedTabs = () => {
+    const next = closeSavedTabsState(files, openFileIds, activeFileId, pinnedFileIds);
+    const closingIds = openFileIds.filter((id) => !next.openFileIds.includes(id));
+    if (closingIds.length > 0) {
+      setClosedTabHistory((prev) => [...closingIds.reverse(), ...prev.filter((id) => !closingIds.includes(id))].slice(0, 20));
+    }
+    setOpenFileIds(next.openFileIds);
+    setActiveFileId(next.activeFileId);
+  };
+
+  const closeAllTabs = (includePinned = false) => {
+    const next = closeAllTabsState(files, openFileIds, pinnedFileIds, includePinned);
+    const closingIds = openFileIds.filter((id) => !next.openFileIds.includes(id));
+    if (closingIds.length > 0) {
+      setClosedTabHistory((prev) => [...closingIds.reverse(), ...prev.filter((id) => !closingIds.includes(id))].slice(0, 20));
+    }
+    if (includePinned) {
+      setPinnedFileIds([]);
+    }
+    setOpenFileIds(next.openFileIds);
+    setActiveFileId(next.activeFileId);
+  };
+
+  const reopenClosedTab = () => {
+    const validIds = new Set(files.map((f) => f.id));
+    const targetId = closedTabHistory.find((id) => validIds.has(id) && !openFileIds.includes(id));
+    if (!targetId) return;
+    setClosedTabHistory((prev) => prev.filter((id) => id !== targetId));
+    openFile(targetId);
+  };
+
+  const applyNavigationEntry = (entry: NavigationEntry) => {
+    isRestoringNavRef.current = true;
+    try {
+      setActiveViewState(entry.view);
+      if (entry.view === 'editor' && entry.fileId) {
+        const next = openTabState(files, openFileIds, entry.fileId, pinnedFileIds);
+        setOpenFileIds(next.openFileIds);
+        setActiveFileId(next.activeFileId);
+        if (entry.line !== undefined) {
+          setTargetEditorLine(entry.line);
+        }
+      } else if (entry.view === 'graph') {
+        setGraphSession((prev) => ({
+          ...prev,
+          selectedNodeId: entry.graphNodeId !== undefined ? entry.graphNodeId : prev.selectedNodeId,
+          scopedGroupKey: entry.scopedGroupKey !== undefined ? entry.scopedGroupKey : prev.scopedGroupKey,
+        }));
+      }
+    } finally {
+      window.setTimeout(() => {
+        isRestoringNavRef.current = false;
+      }, 0);
     }
   };
+
+  const canGoBack = navIndex > 0;
+  const canGoForward = navIndex < navHistory.length - 1;
+
+  const goBack = () => {
+    if (!canGoBack) return;
+    const nextIndex = navIndex - 1;
+    const entry = navHistory[nextIndex];
+    if (!entry) return;
+    setNavIndex(nextIndex);
+    applyNavigationEntry(entry);
+  };
+
+  const goForward = () => {
+    if (!canGoForward) return;
+    const nextIndex = navIndex + 1;
+    const entry = navHistory[nextIndex];
+    if (!entry) return;
+    setNavIndex(nextIndex);
+    applyNavigationEntry(entry);
+  };
+
+  // Reset graph session & navigation history when switching workspaces
+  const prevWorkspacePathRef = useRef<string | null>(workspacePath);
+  useEffect(() => {
+    if (prevWorkspacePathRef.current !== workspacePath) {
+      prevWorkspacePathRef.current = workspacePath;
+      setGraphSession(createDefaultGraphSession());
+      setPinnedFileIds([]);
+      setClosedTabHistory([]);
+      setNavHistory([{ view: activeView }]);
+      setNavIndex(0);
+    }
+  }, [workspacePath, activeView]);
+
+  // Invariant: keep activeFileId and openFileIds synchronized with files
+  useEffect(() => {
+    const validFileIds = new Set(files.map((f) => f.id));
+    const nextPinned = pinnedFileIds.filter((id) => validFileIds.has(id));
+    if (nextPinned.length !== pinnedFileIds.length) {
+      setPinnedFileIds(nextPinned);
+    }
+    const reconciled = reconcileEditorTabs(files, openFileIds, activeFileId, nextPinned);
+    const openChanged =
+      reconciled.openFileIds.length !== openFileIds.length ||
+      reconciled.openFileIds.some((id, idx) => id !== openFileIds[idx]);
+    if (openChanged) {
+      setOpenFileIds(reconciled.openFileIds);
+    }
+    if (reconciled.activeFileId !== activeFileId) {
+      setActiveFileId(reconciled.activeFileId);
+    }
+  }, [files, openFileIds, activeFileId, pinnedFileIds]);
 
   const updateFileContent = (fileId: string, content: string) => {
     setFiles(prev => prev.map(f => {
@@ -2506,6 +2748,8 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         openWorkspaceByPath,
         editorSettings,
         updateEditorSettings,
+        appTheme,
+        setAppTheme,
         targetEditorLine,
         setTargetEditorLine,
         saveAllFiles,
@@ -2554,6 +2798,25 @@ export const IDEProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         pushToGitHub,
         pullFromGitHub,
         switchBranch,
+        graphSession,
+        setGraphSession,
+        updateGraphSession,
+        resetGraphSession,
+        isGraphGuideOpen,
+        setIsGraphGuideOpen,
+        canGoBack,
+        canGoForward,
+        goBack,
+        goForward,
+        recordNavigation,
+        pinnedFileIds,
+        closedTabHistory,
+        togglePinTab,
+        closeOtherTabs,
+        closeTabsToRight,
+        closeSavedTabs,
+        closeAllTabs,
+        reopenClosedTab,
       }}
     >
       {children}

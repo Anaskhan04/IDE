@@ -1,166 +1,153 @@
 import React, { useState } from 'react';
+import { ChevronDown, ChevronRight, FlaskConical, Play, RefreshCw } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
-import { 
-  FlaskConical, 
-  Play, 
-  RefreshCw, 
-  CheckCircle2, 
-  TrendingUp, 
-  Zap, 
-  ShieldCheck, 
-  Layers, 
-  Clock, 
-  Award,
-  BarChart3,
-  ArrowRight
-} from 'lucide-react';
+import { Badge, Button, NotificationBanner } from '../ui';
 
 export const BenchmarkDashboard: React.FC = () => {
   const { experiments, runExperiment } = useIDE();
-  const [selectedExpId, setSelectedExpId] = useState<string>(experiments[0].id);
+  const [selectedExpId, setSelectedExpId] = useState<string>(experiments[0]?.id || '');
+  const [showMethodology, setShowMethodology] = useState(false);
 
-  const selectedExp = experiments.find(e => e.id === selectedExpId) || experiments[0];
+  const selectedExp = experiments.find((e) => e.id === selectedExpId) || experiments[0];
+
+  if (!selectedExp) {
+    return (
+      <section className="flex h-full items-center justify-center bg-ide-bg p-6 font-sans text-[13px] text-ide-muted">
+        No benchmark specifications loaded.
+      </section>
+    );
+  }
 
   return (
-    <div className="flex-1 bg-ide-bg h-[calc(100vh-3.5rem-1.75rem)] overflow-y-auto p-6 select-none font-sans">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-ide-border">
+    <section className="h-full overflow-y-auto bg-ide-bg p-6 font-sans" data-purpose="benchmark-workspace">
+      <div className="mx-auto max-w-6xl space-y-6">
+        <header className="flex flex-col justify-between gap-4 border-b border-ide-border pb-4 md:flex-row md:items-center">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="p-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-400">
-                <FlaskConical className="w-5 h-5" />
-              </div>
-              <h1 className="text-xl font-bold text-white">Evaluation Plan & Empirical Benchmarks</h1>
-              <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                Section 5 Specification
-              </span>
+            <div className="flex items-center gap-2">
+              <FlaskConical className="h-5 w-5 text-ide-purple" aria-hidden="true" />
+              <h1 className="text-[20px] font-semibold text-ide-strong">Evaluation benchmarks</h1>
+              <Badge variant="warning">Illustrative</Badge>
             </div>
-            <p className="text-xs text-slate-400 max-w-2xl">
-              Quantitative comparison of IntelliCode Persistent Intelligence against conventional AI coding approaches across 4 rigorous experimental setups.
+            <p className="mt-1 max-w-2xl text-[12px] text-ide-muted">
+              Reference comparison scenarios for project-aware context vs. unindexed prompting. Values shown are illustrative simulation fixtures, not live telemetry.
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => runExperiment(selectedExp.id)}
-              disabled={selectedExp.status === 'running'}
-              className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-2 transition-colors shadow-sm"
-            >
-              {selectedExp.status === 'running' ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+          <Button
+            variant="primary"
+            leftIcon={
+              selectedExp.status === 'running' ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
               ) : (
-                <Play className="w-3.5 h-3.5" />
-              )}
-              <span>{selectedExp.status === 'running' ? 'Simulating Experiment...' : 'Run Benchmark Test'}</span>
-            </button>
-          </div>
-        </div>
+                <Play className="h-4 w-4" />
+              )
+            }
+            disabled={selectedExp.status === 'running'}
+            onClick={() => runExperiment(selectedExp.id)}
+          >
+            {selectedExp.status === 'running' ? 'Simulating…' : 'Run simulation'}
+          </Button>
+        </header>
 
-        {/* Experiment Navigation Tabs */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <NotificationBanner
+          variant="info"
+          title="Experimental simulation view"
+          message="These scenarios illustrate evaluation criteria using local fixture data. For real workspace checks, run unit tests in the Integrated Terminal."
+        />
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {experiments.map((exp, idx) => {
-            const isSelected = exp.id === selectedExpId;
+            const isSelected = exp.id === selectedExp.id;
             return (
               <button
                 key={exp.id}
+                type="button"
                 onClick={() => setSelectedExpId(exp.id)}
-                className={`p-3 rounded-xl border text-left transition-all ${
+                className={`ide-focus-ring rounded-ide-panel border p-3.5 text-left transition-colors duration-150 ${
                   isSelected
-                    ? 'bg-ide-panel border-purple-500 shadow-md shadow-purple-500/10 ring-1 ring-purple-500/30'
-                    : 'bg-ide-panel/60 border-ide-border hover:bg-ide-panel hover:border-slate-700'
+                    ? 'border-ide-focus bg-ide-selected'
+                    : 'border-ide-border bg-ide-panel hover:bg-ide-hover'
                 }`}
               >
-                <div className="flex items-center justify-between text-xs font-mono mb-1.5">
-                  <span className="text-purple-400 font-bold">Experiment 0{idx + 1}</span>
-                  <span className={`w-2 h-2 rounded-full ${
-                    exp.status === 'running' ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'
-                  }`} />
+                <div className="mb-1 flex items-center justify-between text-[12px]">
+                  <span className="font-medium text-ide-purple">Scenario 0{idx + 1}</span>
+                  <Badge variant={exp.status === 'running' ? 'warning' : 'success'}>
+                    {exp.status}
+                  </Badge>
                 </div>
-                <h3 className="text-xs font-semibold text-slate-200 line-clamp-1">{exp.title.split(':')[1] || exp.title}</h3>
-                <p className="text-[11px] text-slate-400 mt-1 line-clamp-1">{exp.hypothesis}</p>
+                <div className="truncate text-[13px] font-semibold text-ide-strong">
+                  {exp.title.split(':')[1]?.trim() || exp.title}
+                </div>
+                <p className="mt-1 line-clamp-2 text-[12px] text-ide-muted">{exp.hypothesis}</p>
               </button>
             );
           })}
         </div>
 
-        {/* Active Experiment Detail Card */}
-        <div className="p-6 rounded-2xl bg-ide-panel border border-ide-border space-y-6">
-          <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 pb-4 border-b border-ide-border">
+        <div className="space-y-5 rounded-ide-panel border border-ide-border bg-ide-panel p-5">
+          <div className="flex flex-col justify-between gap-3 border-b border-ide-border pb-4 md:flex-row md:items-start">
             <div>
-              <div className="flex items-center gap-2 font-mono text-xs text-purple-400 mb-1">
-                <span>SCIENTIFIC EVALUATION</span>
-                <span>•</span>
-                <span>STATUS: {selectedExp.status.toUpperCase()}</span>
-              </div>
-              <h2 className="text-lg font-bold text-white font-mono">{selectedExp.title}</h2>
-              <div className="mt-2 text-xs text-slate-300 bg-ide-card p-3 rounded-xl border border-ide-border/80 leading-relaxed font-sans">
-                <strong className="text-cyan-300 font-mono">Hypothesis: </strong>
-                {selectedExp.hypothesis}
-              </div>
+              <h2 className="text-[16px] font-semibold text-ide-strong">{selectedExp.title}</h2>
+              <p className="mt-1.5 text-[13px] text-ide-muted leading-relaxed">
+                {selectedExp.description}
+              </p>
             </div>
-
-            <div className="shrink-0 font-mono text-xs bg-purple-500/10 border border-purple-500/20 p-3 rounded-xl text-purple-300 text-right">
-              <span className="text-slate-400 block text-[10px]">EVALUATION PROTOCOL</span>
-              <span className="font-bold">Controlled A/B Benchmark</span>
-            </div>
+            <Badge variant="neutral" className="shrink-0">
+              {selectedExp.status}
+            </Badge>
           </div>
 
-          {/* Description */}
-          <p className="text-xs text-slate-400 font-sans leading-relaxed">
-            {selectedExp.description}
-          </p>
+          <div className="rounded-ide-control border border-ide-border bg-ide-bg p-3.5 text-[13px] text-ide-text">
+            <span className="font-semibold text-ide-strong">Hypothesis: </span>
+            {selectedExp.hypothesis}
+          </div>
 
-          {/* Comparative Metrics Grid */}
-          <div className="space-y-3">
-            <h3 className="text-xs font-mono uppercase text-slate-400 tracking-wider">
-              Empirical Results & Differential Analysis
-            </h3>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {selectedExp.metrics.map((metric, idx) => (
+              <div
+                key={idx}
+                className="flex flex-col justify-between space-y-3 rounded-ide-control border border-ide-border bg-ide-bg p-4"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[13px] font-medium text-ide-strong">{metric.label}</span>
+                  <Badge variant="success">{metric.improvement}</Badge>
+                </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {selectedExp.metrics.map((metric, idx) => (
-                <div
-                  key={idx}
-                  className="p-4 rounded-xl bg-ide-card border border-ide-border flex flex-col justify-between space-y-3"
-                >
-                  <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="text-slate-300 font-semibold">{metric.label}</span>
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
-                      {metric.improvement}
-                    </span>
-                  </div>
-
-                  {/* Visual Comparison Bar */}
-                  <div className="grid grid-cols-2 gap-3 pt-2 border-t border-ide-border/60 text-xs font-mono">
-                    <div className="p-2.5 rounded-lg bg-ide-bg border border-slate-800">
-                      <span className="text-[10px] text-slate-500 block uppercase">Conventional</span>
-                      <span className="text-rose-400 font-bold text-sm block mt-1">{metric.conventional}</span>
+                <div className="grid grid-cols-2 gap-3 border-t border-ide-border pt-3 text-[12px]">
+                  <div className="rounded-ide-small border border-ide-border bg-ide-surface p-2.5">
+                    <div className="text-ide-muted">Baseline</div>
+                    <div className="mt-1 font-mono text-[14px] font-semibold text-ide-rose">
+                      {metric.conventional}
                     </div>
-
-                    <div className="p-2.5 rounded-lg bg-emerald-950/20 border border-emerald-500/30">
-                      <span className="text-[10px] text-emerald-400 block uppercase">IntelliCode</span>
-                      <span className="text-emerald-300 font-bold text-sm block mt-1">{metric.intelliCode}</span>
+                  </div>
+                  <div className="rounded-ide-small border border-ide-border bg-ide-surface p-2.5">
+                    <div className="text-ide-muted">IntelliCode (illustrative)</div>
+                    <div className="mt-1 font-mono text-[14px] font-semibold text-ide-emerald">
+                      {metric.intelliCode}
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
 
-          {/* Key Conclusions from PDF */}
-          <div className="p-4 rounded-xl bg-gradient-to-r from-blue-950/20 via-purple-950/20 to-ide-card border border-purple-500/30 flex items-start gap-3">
-            <Award className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
-            <div className="text-xs leading-relaxed">
-              <span className="font-bold text-slate-200 block font-mono mb-1">
-                Conclusion & Practical Advantage (Section 6)
-              </span>
-              <p className="text-slate-400">
-                Persistent Project Context eliminates redundant file reads across models, Change Impact Analysis prevents downstream regressions before deployment, and Centralized MCP dramatically reduces tooling integration friction.
-              </p>
-            </div>
+          <div className="rounded-ide-control border border-ide-border bg-ide-surface">
+            <button
+              type="button"
+              onClick={() => setShowMethodology((v) => !v)}
+              className="ide-focus-ring flex w-full items-center gap-2 px-3 py-2.5 text-[13px] font-medium text-ide-text hover:bg-ide-hover"
+            >
+              {showMethodology ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              <span>Methodology &amp; scope notes</span>
+            </button>
+            {showMethodology && (
+              <div className="border-t border-ide-border px-4 py-3 text-[12px] text-ide-muted leading-relaxed">
+                Simulations compare full-file prompting against AST-filtered context selection, dependency impact traversal, and tool-schema consolidation. Real project accuracy depends on workspace language coverage and provider model capabilities.
+              </div>
+            )}
           </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 };

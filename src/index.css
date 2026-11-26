@@ -19,6 +19,11 @@
     color-scheme: dark;
   }
 
+  html.light,
+  [data-theme="light"] {
+    color-scheme: light;
+  }
+
   body {
     margin: 0;
     background: rgb(var(--ide-bg) / 1);
@@ -116,11 +121,11 @@
     opacity: 0.55;
   }
 
-  .minimap-comment { background-color: rgb(var(--ide-text-subtle) / 1); }
-  .minimap-keyword { background-color: rgb(var(--ide-rose) / 0.9); }
-  .minimap-func { background-color: rgb(var(--ide-cyan) / 0.9); }
-  .minimap-str { background-color: rgb(var(--ide-amber) / 0.9); }
-  .minimap-plain { background-color: rgb(var(--ide-text-muted) / 0.8); }
+  .minimap-comment { background-color: rgb(var(--syntax-comment) / 0.9); }
+  .minimap-keyword { background-color: rgb(var(--syntax-keyword) / 0.9); }
+  .minimap-func { background-color: rgb(var(--syntax-function) / 0.9); }
+  .minimap-str { background-color: rgb(var(--syntax-string) / 0.9); }
+  .minimap-plain { background-color: rgb(var(--ide-text-muted) / 0.75); }
 
   /* Legacy utility names remain safe for secondary views while adopting flat surfaces. */
   .bg-code {

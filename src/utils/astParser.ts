@@ -4,12 +4,20 @@ import type { ProjectFile, SymbolInfo, GraphNode, GraphEdge, CBMNodeType } from 
 /**
  * FileAnalysisResult holds the AST-extracted metadata for a single source file.
  */
+export interface ImportBinding {
+  localName: string;
+  importedName: string;
+  isDefault?: boolean;
+  isNamespace?: boolean;
+}
+
 export interface FileAnalysisResult {
   symbols: SymbolInfo[];
   imports: Array<{
     specifier: string;
     resolvedPath?: string;
     names: string[];
+    bindings?: ImportBinding[];
     isDefault: boolean;
     isNamespace: boolean;
     line: number;
@@ -19,13 +27,35 @@ export interface FileAnalysisResult {
   }>;
   exports: Array<{
     name: string;
+    originalName?: string;
     isDefault: boolean;
     line: number;
+    fromSpecifier?: string;
+    resolvedFromPath?: string;
+    isReexportAll?: boolean;
   }>;
   calls: Array<{
     calleeName: string;
+    qualifierName?: string;
+    isDynamic?: boolean;
     line: number;
     callerSymbolName?: string;
+  }>;
+  heritage?: Array<{
+    sourceSymbolName: string;
+    targetName: string;
+    kind: 'extends' | 'implements';
+    line: number;
+  }>;
+  jsxRefs?: Array<{
+    componentName: string;
+    callerSymbolName?: string;
+    line: number;
+  }>;
+  typeRefs?: Array<{
+    typeName: string;
+    ownerSymbolName?: string;
+    line: number;
   }>;
   hasErrors: boolean;
   errorCount: number;
@@ -89,6 +119,9 @@ export function analyzeSourceFile(file: ProjectFile, allFiles: ProjectFile[] = [
     imports: [],
     exports: [],
     calls: [],
+    heritage: [],
+    jsxRefs: [],
+    typeRefs: [],
     hasErrors: false,
     errorCount: 0,
   };
@@ -176,6 +209,44 @@ export function analyzeSourceFile(file: ProjectFile, allFiles: ProjectFile[] = [
         result.symbols.push(symbol);
         if (exported) {
           result.exports.push({ name, isDefault: isDefaultExport(node), line });
+        }
+
+        // Class heritage: extends / implements
+        if (node.heritageClauses) {
+          for (const clause of node.heritageClauses) {
+            const kind = clause.token === ts.SyntaxKind.ExtendsKeyword ? 'extends' : 'implements';
+            for (const typeNode of clause.types) {
+              if (ts.isIdentifier(typeNode.expression)) {
+                result.heritage!.push({
+                  sourceSymbolName: name,
+                  targetName: typeNode.expression.text,
+                  kind,
+                  line: getLine(typeNode.getStart(sourceFile)),
+                });
+              }
+            }
+          }
+        }
+        result.symbols.push(symbol);
+        if (exported) {
+          result.exports.push({ name, isDefault: isDefaultExport(node), line });
+        }
+
+        // Class heritage: extends / implements
+        if (node.heritageClauses) {
+          for (const clause of node.heritageClauses) {
+            const kind = clause.token === ts.SyntaxKind.ExtendsKeyword ? 'extends' : 'implements';
+            for (const typeNode of clause.types) {
+              if (ts.isIdentifier(typeNode.expression)) {
+                result.heritage!.push({
+                  sourceSymbolName: name,
+                  targetName: typeNode.expression.text,
+                  kind,
+                  line: getLine(typeNode.getStart(sourceFile)),
+                });
+              }
+            }
+          }
         }
 
         const prevSymbol = currentSymbolName;
@@ -293,23 +364,31 @@ export function analyzeSourceFile(file: ProjectFile, allFiles: ProjectFile[] = [
         if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
           const specifier = node.moduleSpecifier.text;
           const names: string[] = [];
+          const bindings: ImportBinding[] = [];
           let isDefault = false;
           let isNamespace = false;
 
           if (node.importClause) {
             // Default import: import Foo from 'bar'
             if (node.importClause.name) {
-              names.push(node.importClause.name.text);
+              const localName = node.importClause.name.text;
+              names.push(localName);
+              bindings.push({ localName, importedName: 'default', isDefault: true });
               isDefault = true;
             }
-            // Named / namespace bindings: import { a, b } from 'bar' or import * as Foo from 'bar'
+            // Named / namespace bindings: import { a, b as c } from 'bar' or import * as Foo from 'bar'
             if (node.importClause.namedBindings) {
               if (ts.isNamespaceImport(node.importClause.namedBindings)) {
-                names.push(node.importClause.namedBindings.name.text);
+                const localName = node.importClause.namedBindings.name.text;
+                names.push(localName);
+                bindings.push({ localName, importedName: '*', isNamespace: true });
                 isNamespace = true;
               } else if (ts.isNamedImports(node.importClause.namedBindings)) {
                 node.importClause.namedBindings.elements.forEach((el) => {
-                  names.push(el.name.text);
+                  const localName = el.name.text;
+                  const importedName = el.propertyName ? el.propertyName.text : localName;
+                  names.push(localName);
+                  bindings.push({ localName, importedName });
                 });
               }
             }
@@ -322,6 +401,7 @@ export function analyzeSourceFile(file: ProjectFile, allFiles: ProjectFile[] = [
             specifier,
             resolvedPath,
             names,
+            bindings,
             isDefault,
             isNamespace,
             line,
@@ -330,16 +410,51 @@ export function analyzeSourceFile(file: ProjectFile, allFiles: ProjectFile[] = [
         return;
       }
 
-      // 8. Export Declarations: export { a, b } from './c';
+      // 8. Export Declarations: export { a, b as c } from './c'; export * from './c';
       if (ts.isExportDeclaration(node)) {
         const line = getLine(node.getStart(sourceFile));
+        const fromSpecifier =
+          node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)
+            ? node.moduleSpecifier.text
+            : undefined;
+        const resolvedFromPath = fromSpecifier
+          ? resolveImportPath(fromSpecifier, file.path, allFiles)
+          : undefined;
+
+        if (fromSpecifier) {
+          result.imports.push({
+            specifier: fromSpecifier,
+            resolvedPath: resolvedFromPath,
+            names: [],
+            bindings: [],
+            isDefault: false,
+            isNamespace: !node.exportClause,
+            line,
+          });
+        }
+
         if (node.exportClause && ts.isNamedExports(node.exportClause)) {
           node.exportClause.elements.forEach((el) => {
+            const exportedName = el.name.text;
+            const originalName = el.propertyName ? el.propertyName.text : exportedName;
             result.exports.push({
-              name: el.name.text,
+              name: exportedName,
+              originalName,
               isDefault: false,
               line,
+              fromSpecifier,
+              resolvedFromPath,
             });
+          });
+        } else if (!node.exportClause && fromSpecifier) {
+          result.exports.push({
+            name: '*',
+            originalName: '*',
+            isDefault: false,
+            line,
+            fromSpecifier,
+            resolvedFromPath,
+            isReexportAll: true,
           });
         }
         return;
@@ -402,26 +517,67 @@ export function analyzeSourceFile(file: ProjectFile, allFiles: ProjectFile[] = [
         }
 
         let calleeName = '';
+        let qualifierName: string | undefined;
+        let isDynamic = false;
         if (ts.isIdentifier(node.expression)) {
           calleeName = node.expression.text;
         } else if (ts.isPropertyAccessExpression(node.expression)) {
           calleeName = node.expression.name.text;
+          if (ts.isIdentifier(node.expression.expression)) {
+            qualifierName = node.expression.expression.text;
+          }
+        } else if (ts.isElementAccessExpression(node.expression)) {
+          isDynamic = true;
+          calleeName = '[dynamic]';
         }
 
         if (calleeName && !['if', 'for', 'while', 'switch', 'require', 'import'].includes(calleeName)) {
           result.calls.push({
             calleeName,
+            qualifierName,
+            isDynamic,
             line,
             callerSymbolName: currentSymbolName,
           });
 
-          if (currentSymbolName) {
+          if (currentSymbolName && !isDynamic) {
             const sym = result.symbols.find((s) => s.name === currentSymbolName);
             if (sym && !sym.calls?.includes(calleeName)) {
               sym.calls = sym.calls || [];
               sym.calls.push(calleeName);
             }
           }
+        }
+      }
+
+      // 11. JSX Component References: <LoginForm />
+      if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+        if (ts.isIdentifier(node.tagName)) {
+          const tag = node.tagName.text;
+          if (/^[A-Z]/.test(tag)) {
+            result.jsxRefs!.push({
+              componentName: tag,
+              callerSymbolName: currentSymbolName,
+              line: getLine(node.getStart(sourceFile)),
+            });
+          }
+        }
+      }
+
+      // 12. Type References: param: UserProfile
+      if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) {
+        const typeName = node.typeName.text;
+        if (
+          ![
+            'Promise', 'Array', 'Record', 'Partial', 'Required', 'Readonly',
+            'Map', 'Set', 'Date', 'Error', 'React', 'JSX',
+          ].includes(typeName)
+        ) {
+          result.typeRefs!.push({
+            typeName,
+            ownerSymbolName: currentSymbolName,
+            line: getLine(node.getStart(sourceFile)),
+          });
         }
       }
 
@@ -447,6 +603,9 @@ function analyzeFallbackFile(file: ProjectFile, allFiles: ProjectFile[] = []): F
     imports: [],
     exports: [],
     calls: [],
+    heritage: [],
+    jsxRefs: [],
+    typeRefs: [],
     hasErrors: false,
     errorCount: 0,
   };
@@ -587,6 +746,36 @@ export function resolveImportPath(
 
     // 2. Also check directly as a workspace root-relative path (e.g. "src/main.js")
     candidateBasePaths.push(normalizePath(cleanSpec));
+
+    // 3. Check tsconfig.json compilerOptions.paths aliases (e.g. "@/*": ["src/*"])
+    const tsconfigFile = allFiles.find((f) => normalizePath(f.path) === 'tsconfig.json');
+    if (tsconfigFile) {
+      try {
+        const parsed = JSON.parse(tsconfigFile.content);
+        const pathsObj = parsed?.compilerOptions?.paths as Record<string, string[]> | undefined;
+        if (pathsObj && typeof pathsObj === 'object') {
+          for (const [aliasPattern, targets] of Object.entries(pathsObj)) {
+            if (!Array.isArray(targets) || targets.length === 0) continue;
+            if (aliasPattern.endsWith('/*')) {
+              const prefix = aliasPattern.slice(0, -1);
+              if (cleanSpec.startsWith(prefix)) {
+                const rest = cleanSpec.slice(prefix.length);
+                for (const t of targets) {
+                  const targetPrefix = t.endsWith('/*') ? t.slice(0, -1) : t;
+                  candidateBasePaths.push(normalizePath(`${targetPrefix}${rest}`));
+                }
+              }
+            } else if (cleanSpec === aliasPattern) {
+              for (const t of targets) {
+                candidateBasePaths.push(normalizePath(t));
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore malformed tsconfig.json
+      }
+    }
   }
 
   for (const basePath of candidateBasePaths) {
@@ -652,6 +841,9 @@ export function analyzeCssFile(file: ProjectFile, allFiles: ProjectFile[] = []):
     imports: [],
     exports: [],
     calls: [],
+    heritage: [],
+    jsxRefs: [],
+    typeRefs: [],
     hasErrors: false,
     errorCount: 0,
   };
@@ -682,6 +874,9 @@ export function analyzeHtmlFile(file: ProjectFile, allFiles: ProjectFile[] = [])
     imports: [],
     exports: [],
     calls: [],
+    heritage: [],
+    jsxRefs: [],
+    typeRefs: [],
     hasErrors: false,
     errorCount: 0,
   };
@@ -1026,14 +1221,18 @@ export function buildGraphFromFiles(files: ProjectFile[]): {
   const nodeMap = new Map<string, GraphNode>();
   const edgeSet = new Set<string>();
 
-  // 1. Analyze every file and attach extracted symbols to ProjectFile
+  // 1. Analyze every file once, cache results, and attach extracted symbols to ProjectFile
+  const analysisByFileId = new Map<string, FileAnalysisResult>();
   const enrichedFiles: ProjectFile[] = files.map((file) => {
     const analysis = analyzeSourceFile(file, files);
+    analysisByFileId.set(file.id, analysis);
     return {
       ...file,
       symbols: analysis.symbols,
     };
   });
+  const fileByNormPath = new Map<string, ProjectFile>();
+  enrichedFiles.forEach((f) => fileByNormPath.set(normalizePath(f.path), f));
 
   // 2. Group files by architectural area
   type ArchArea = 'frontend' | 'utilities' | 'backend' | 'database' | 'core' | 'tests';
@@ -1102,29 +1301,38 @@ export function buildGraphFromFiles(files: ProjectFile[]): {
       nodes.push(fileNode);
       nodeMap.set(fileNodeId, fileNode);
 
-      // Collect relevant symbols for graph nodes (functions, classes, interfaces)
+      // Collect relevant symbols for graph nodes (functions, classes, interfaces, types)
       const graphSymbols = (file.symbols || []).filter(
-        (s) => s.kind === 'function' || s.kind === 'class' || s.kind === 'interface'
+        (s) => s.kind === 'function' || s.kind === 'class' || s.kind === 'interface' || s.kind === 'type'
       );
-      // Prioritize exported symbols, cap at 12 per file to prevent clutter
+      // Prioritize exported symbols, cap at 16 per file to preserve real symbols without clutter
       const prioritizedSymbols = [...graphSymbols]
         .sort((a, b) => (b.exported ? 1 : 0) - (a.exported ? 1 : 0))
-        .slice(0, 12);
+        .slice(0, 16);
 
       prioritizedSymbols.forEach((symbol, symIdx) => {
         const symNodeId = `node-sym-${file.id}-${symbol.name}`;
-        const symType: CBMNodeType = symbol.kind === 'class' ? 'Class' : 'Function';
+        const symType: CBMNodeType =
+          symbol.kind === 'class'
+            ? 'Class'
+            : symbol.kind === 'interface'
+              ? 'Interface'
+              : symbol.kind === 'type'
+                ? 'Type'
+                : 'Function';
 
         if (!nodeMap.has(symNodeId)) {
           const symNode: GraphNode = {
             id: symNodeId,
-            label: symbol.kind === 'class' ? symbol.name : `${symbol.name}()`,
+            label: symbol.kind === 'function' ? `${symbol.name}()` : symbol.name,
             type: symType,
             module: file.name,
             cluster,
             architectureArea: area,
             isGenerated: isGen,
             path: file.path,
+            line: symbol.line,
+            exported: symbol.exported,
             impactStatus: file.isModified ? 'modified' : 'none',
             connectionsCount: 1,
             x: colStartX + 200,
@@ -1143,6 +1351,10 @@ export function buildGraphFromFiles(files: ProjectFile[]): {
               target: symNodeId,
               type: 'DEFINES',
               label: 'DEFINES',
+              sourceFilePath: file.path,
+              sourceLine: symbol.line,
+              resolutionStatus: 'direct',
+              evidence: `declaration at L${symbol.line}`,
             });
             edgeSet.add(defEdgeId);
           }
@@ -1155,17 +1367,162 @@ export function buildGraphFromFiles(files: ProjectFile[]): {
     });
   });
 
-  // 4. Build Real IMPORTS Edges
+  // Helper: resolve an exported symbol from a target file, following barrel re-exports safely
+  const resolveExportedSymbol = (
+    targetFile: ProjectFile,
+    exportedName: string,
+    visited = new Set<string>()
+  ): { file: ProjectFile; symbol: SymbolInfo } | null => {
+    const norm = normalizePath(targetFile.path);
+    if (visited.has(norm)) return null;
+    visited.add(norm);
+
+    const targetAnalysis = analysisByFileId.get(targetFile.id);
+    if (!targetAnalysis) return null;
+
+    if (exportedName === 'default') {
+      const defExp = targetAnalysis.exports.find((e) => e.isDefault);
+      if (defExp) {
+        const sym = targetFile.symbols?.find((s) => s.name === defExp.name);
+        if (sym) return { file: targetFile, symbol: sym };
+      }
+      const firstExported = targetFile.symbols?.find((s) => s.exported);
+      if (firstExported) return { file: targetFile, symbol: firstExported };
+    }
+
+    const directSym = targetFile.symbols?.find((s) => s.name === exportedName);
+    if (directSym) {
+      return { file: targetFile, symbol: directSym };
+    }
+
+    // Check named re-exports: export { orig as exportedName } from './other'
+    const namedReexport = targetAnalysis.exports.find(
+      (e) => !e.isReexportAll && e.name === exportedName && e.resolvedFromPath
+    );
+    if (namedReexport?.resolvedFromPath) {
+      const nextFile = fileByNormPath.get(normalizePath(namedReexport.resolvedFromPath));
+      if (nextFile) {
+        return resolveExportedSymbol(nextFile, namedReexport.originalName || exportedName, visited);
+      }
+    }
+
+    // Check wildcard re-exports: export * from './other'
+    for (const starReexport of targetAnalysis.exports.filter((e) => e.isReexportAll && e.resolvedFromPath)) {
+      const nextFile = fileByNormPath.get(normalizePath(starReexport.resolvedFromPath!));
+      if (nextFile) {
+        const found = resolveExportedSymbol(nextFile, exportedName, visited);
+        if (found) return found;
+      }
+    }
+
+    return null;
+  };
+
+  // Helper: resolve a symbol identifier used inside `sourceFile` via local scope -> import bindings -> re-exports
+  const resolveSemanticSymbol = (
+    sourceFile: ProjectFile,
+    identifierName: string,
+    qualifierName?: string
+  ): { file: ProjectFile; symbol: SymbolInfo; status: 'direct' | 'semantic'; evidence: string } | null => {
+    const sourceAnalysis = analysisByFileId.get(sourceFile.id);
+    if (!sourceAnalysis) return null;
+
+    // 1. Namespace import: import * as ns from './mod'; ns.fn()
+    if (qualifierName) {
+      for (const imp of sourceAnalysis.imports) {
+        if (!imp.resolvedPath) continue;
+        const nsBinding = imp.bindings?.find((b) => b.isNamespace && b.localName === qualifierName);
+        if (nsBinding) {
+          const targetFile = fileByNormPath.get(normalizePath(imp.resolvedPath));
+          if (targetFile) {
+            const resolved = resolveExportedSymbol(targetFile, identifierName);
+            if (resolved) {
+              return {
+                file: resolved.file,
+                symbol: resolved.symbol,
+                status: 'semantic',
+                evidence: `namespace import ${qualifierName}.${identifierName}`,
+              };
+            }
+          }
+        }
+      }
+      // Also check local class methods: ClassName.method or this.method inside same file
+      const localMethod = sourceFile.symbols?.find(
+        (s) => s.name === identifierName || s.name.endsWith(`.${identifierName}`)
+      );
+      if (localMethod) {
+        return {
+          file: sourceFile,
+          symbol: localMethod,
+          status: 'direct',
+          evidence: `local member ${qualifierName}.${identifierName}`,
+        };
+      }
+      return null;
+    }
+
+    // 2. Local symbol in the same file
+    const localSym = sourceFile.symbols?.find((s) => s.name === identifierName);
+    if (localSym) {
+      return {
+        file: sourceFile,
+        symbol: localSym,
+        status: 'direct',
+        evidence: 'local symbol in same file',
+      };
+    }
+
+    // 3. Imported binding (named, aliased, or default)
+    for (const imp of sourceAnalysis.imports) {
+      if (!imp.resolvedPath) continue;
+      const targetFile = fileByNormPath.get(normalizePath(imp.resolvedPath));
+      if (!targetFile) continue;
+
+      const binding = imp.bindings?.find((b) => b.localName === identifierName);
+      if (binding) {
+        const lookupName = binding.isDefault ? 'default' : binding.importedName;
+        const resolved = resolveExportedSymbol(targetFile, lookupName);
+        if (resolved) {
+          return {
+            file: resolved.file,
+            symbol: resolved.symbol,
+            status: 'semantic',
+            evidence:
+              binding.importedName !== binding.localName
+                ? `import alias ${binding.importedName} as ${binding.localName} from ${imp.specifier}`
+                : `imported from ${imp.specifier}`,
+          };
+        }
+      } else if (imp.names.includes(identifierName)) {
+        const resolved = resolveExportedSymbol(targetFile, identifierName);
+        if (resolved) {
+          return {
+            file: resolved.file,
+            symbol: resolved.symbol,
+            status: 'semantic',
+            evidence: `imported from ${imp.specifier}`,
+          };
+        }
+      }
+    }
+
+    return null;
+  };
+
+  // 4. Build Real IMPORTS, TEST_REFERENCE, CALLS, EXTENDS, IMPLEMENTS, RENDERS, and TYPE_REFERENCE Edges
   enrichedFiles.forEach((file) => {
     const fileNodeId = `node-file-${file.id}`;
-    const analysis = analyzeSourceFile(file, enrichedFiles);
+    const analysis = analysisByFileId.get(file.id) || analyzeSourceFile(file, enrichedFiles);
+    const isTestFile =
+      detectArchitectureArea(file.path) === 'tests' ||
+      file.path.includes('.test.') ||
+      file.path.includes('.spec.');
 
     analysis.imports.forEach((imp) => {
       if (imp.resolvedPath) {
         const normImpPath = normalizePath(imp.resolvedPath);
-        const targetFile = enrichedFiles.find(
-          (f) => f.path === imp.resolvedPath || normalizePath(f.path) === normImpPath
-        );
+        const targetFile = fileByNormPath.get(normImpPath);
         if (targetFile && targetFile.id !== file.id) {
           const targetNodeId = `node-file-${targetFile.id}`;
           const importEdgeId = `edge-import-${file.id}-${targetFile.id}`;
@@ -1212,8 +1569,12 @@ export function buildGraphFromFiles(files: ProjectFile[]): {
               id: importEdgeId,
               source: fileNodeId,
               target: targetNodeId,
-              type: 'IMPORTS',
-              label,
+              type: isTestFile ? 'TEST_REFERENCE' : 'IMPORTS',
+              label: isTestFile ? 'TESTS' : label,
+              sourceFilePath: file.path,
+              sourceLine: imp.line,
+              resolutionStatus: 'direct',
+              evidence: `import "${imp.specifier}" at L${imp.line}`,
               isImpactPath: file.isModified || targetFile.isModified,
             });
             edgeSet.add(importEdgeId);
@@ -1222,33 +1583,119 @@ export function buildGraphFromFiles(files: ProjectFile[]): {
       }
     });
 
-    // 5. Build Real CALLS Edges
+    // 5. Build Semantically Resolved CALLS Edges (no blind global name matching!)
     analysis.calls.forEach((call) => {
-      for (const targetFile of enrichedFiles) {
-        const matchedSymbol = targetFile.symbols?.find((s) => s.name === call.calleeName);
-        if (matchedSymbol) {
-          const targetSymId = `node-sym-${targetFile.id}-${matchedSymbol.name}`;
-          const sourceNodeId = call.callerSymbolName
-            ? `node-sym-${file.id}-${call.callerSymbolName}`
-            : fileNodeId;
+      if (call.isDynamic) return;
+      const resolved = resolveSemanticSymbol(file, call.calleeName, call.qualifierName);
+      if (!resolved) return;
 
-          const effectiveSourceId = nodeMap.has(sourceNodeId) ? sourceNodeId : fileNodeId;
+      const targetSymId = `node-sym-${resolved.file.id}-${resolved.symbol.name}`;
+      const sourceNodeId = call.callerSymbolName
+        ? `node-sym-${file.id}-${call.callerSymbolName}`
+        : fileNodeId;
+      const effectiveSourceId = nodeMap.has(sourceNodeId) ? sourceNodeId : fileNodeId;
 
-          if (nodeMap.has(targetSymId) && effectiveSourceId !== targetSymId) {
-            const callEdgeId = `edge-call-${effectiveSourceId}-${targetSymId}`;
-            if (!edgeSet.has(callEdgeId)) {
-              edges.push({
-                id: callEdgeId,
-                source: effectiveSourceId,
-                target: targetSymId,
-                type: 'CALLS',
-                label: 'CALLS',
-                isImpactPath: file.isModified || targetFile.isModified,
-              });
-              edgeSet.add(callEdgeId);
-            }
-          }
-          break;
+      if (nodeMap.has(targetSymId) && effectiveSourceId !== targetSymId) {
+        const callEdgeId = `edge-call-${effectiveSourceId}-${targetSymId}`;
+        if (!edgeSet.has(callEdgeId)) {
+          edges.push({
+            id: callEdgeId,
+            source: effectiveSourceId,
+            target: targetSymId,
+            type: 'CALLS',
+            label: 'CALLS',
+            sourceFilePath: file.path,
+            sourceLine: call.line,
+            resolutionStatus: resolved.status,
+            evidence: `${resolved.evidence} at L${call.line}`,
+            isImpactPath: file.isModified || resolved.file.isModified,
+          });
+          edgeSet.add(callEdgeId);
+        }
+      }
+    });
+
+    // 6. Build EXTENDS & IMPLEMENTS Edges
+    (analysis.heritage || []).forEach((h) => {
+      const resolved = resolveSemanticSymbol(file, h.targetName);
+      if (!resolved) return;
+      const sourceSymId = `node-sym-${file.id}-${h.sourceSymbolName}`;
+      const targetSymId = `node-sym-${resolved.file.id}-${resolved.symbol.name}`;
+      const edgeType = h.kind === 'extends' ? 'EXTENDS' : 'IMPLEMENTS';
+      if (nodeMap.has(sourceSymId) && nodeMap.has(targetSymId) && sourceSymId !== targetSymId) {
+        const edgeId = `edge-${h.kind}-${sourceSymId}-${targetSymId}`;
+        if (!edgeSet.has(edgeId)) {
+          edges.push({
+            id: edgeId,
+            source: sourceSymId,
+            target: targetSymId,
+            type: edgeType,
+            label: edgeType,
+            sourceFilePath: file.path,
+            sourceLine: h.line,
+            resolutionStatus: resolved.status,
+            evidence: `${h.kind} ${h.targetName} (${resolved.evidence})`,
+            isImpactPath: file.isModified || resolved.file.isModified,
+          });
+          edgeSet.add(edgeId);
+        }
+      }
+    });
+
+    // 7. Build RENDERS (JSX component reference) Edges
+    (analysis.jsxRefs || []).forEach((jsx) => {
+      const resolved = resolveSemanticSymbol(file, jsx.componentName);
+      if (!resolved) return;
+      const targetSymId = `node-sym-${resolved.file.id}-${resolved.symbol.name}`;
+      const sourceNodeId = jsx.callerSymbolName
+        ? `node-sym-${file.id}-${jsx.callerSymbolName}`
+        : fileNodeId;
+      const effectiveSourceId = nodeMap.has(sourceNodeId) ? sourceNodeId : fileNodeId;
+      if (nodeMap.has(targetSymId) && effectiveSourceId !== targetSymId) {
+        const edgeId = `edge-renders-${effectiveSourceId}-${targetSymId}`;
+        if (!edgeSet.has(edgeId)) {
+          edges.push({
+            id: edgeId,
+            source: effectiveSourceId,
+            target: targetSymId,
+            type: 'RENDERS',
+            label: 'RENDERS',
+            sourceFilePath: file.path,
+            sourceLine: jsx.line,
+            resolutionStatus: resolved.status,
+            evidence: `<${jsx.componentName} /> (${resolved.evidence})`,
+            isImpactPath: file.isModified || resolved.file.isModified,
+          });
+          edgeSet.add(edgeId);
+        }
+      }
+    });
+
+    // 8. Build TYPE_REFERENCE Edges
+    (analysis.typeRefs || []).forEach((tr) => {
+      const resolved = resolveSemanticSymbol(file, tr.typeName);
+      if (!resolved) return;
+      const targetSymId = `node-sym-${resolved.file.id}-${resolved.symbol.name}`;
+      const sourceNodeId = tr.ownerSymbolName
+        ? `node-sym-${file.id}-${tr.ownerSymbolName}`
+        : fileNodeId;
+      const effectiveSourceId = nodeMap.has(sourceNodeId) ? sourceNodeId : fileNodeId;
+      if (nodeMap.has(targetSymId) && effectiveSourceId !== targetSymId) {
+        const edgeId = `edge-typeref-${effectiveSourceId}-${targetSymId}`;
+        if (!edgeSet.has(edgeId)) {
+          edges.push({
+            id: edgeId,
+            source: effectiveSourceId,
+            target: targetSymId,
+            type: 'TYPE_REFERENCE',
+            label: 'TYPE_REF',
+            sourceFilePath: file.path,
+            sourceLine: tr.line,
+            resolutionStatus: resolved.status,
+            evidence: `type ${tr.typeName} (${resolved.evidence})`,
+            isImpactPath: file.isModified || resolved.file.isModified,
+          });
+          edgeSet.add(edgeId);
         }
       }
     });

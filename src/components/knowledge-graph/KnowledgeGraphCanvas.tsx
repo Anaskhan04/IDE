@@ -22,16 +22,31 @@ import { useIDE } from '../../context/IDEContext';
 import type { GraphNode, ProjectFile, SymbolInfo } from '../../types/ide';
 import { GRAPH_QUERY_TEMPLATES } from '../../utils/graphIntelligence';
 import { detectArchitectureArea, isGeneratedOrMigrationPath } from '../../utils/astParser';
+import {
+  buildArchitectureOverview,
+  buildScopedGroupGraph,
+  computeConnectedOverviewLayout,
+  computeHierarchicalLayout,
+  computeRadialFocusLayout,
+  type AggregatedGraphEdge,
+  type GraphExplorationMode,
+  type PositionedGraphNode,
+} from '../../utils/graphLayout';
+import { getExpansionPathForNode, reconcileGraphSelection } from '../../utils/graphExplorerState';
+import { GraphGuideDialog } from './GraphGuideDialog';
+import { getWorkspaceDragId, serializeDragPayload } from '../../utils/workspaceDragDrop';
+import { ProgressiveGraphCanvas } from './ProgressiveGraphCanvas';
+import { Button, IconButton, ResizablePanel } from '../ui';
 
 type GraphTab = 'canvas' | 'cypher' | 'trace' | 'clusters';
 type NodeKindFilter = 'all' | 'files' | 'functions' | 'classes' | 'dependencies';
 type ArchAreaFilter = 'all' | 'frontend' | 'backend' | 'database' | 'utilities' | 'tests' | 'core';
 
 const graphTabs: Array<{ id: GraphTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { id: 'canvas', label: '2D Graph', icon: Network },
-  { id: 'cypher', label: 'Cypher Console', icon: Terminal },
-  { id: 'trace', label: 'Call Tracer (BFS)', icon: GitFork },
-  { id: 'clusters', label: 'Louvain Clusters', icon: Layers },
+  { id: 'canvas', label: 'Graph', icon: Network },
+  { id: 'cypher', label: 'Graph queries', icon: Terminal },
+  { id: 'trace', label: 'Call hierarchy', icon: GitFork },
+  { id: 'clusters', label: 'Communities', icon: Layers },
 ];
 
 const kindFilters: Array<{ id: NodeKindFilter; label: string }> = [
@@ -43,29 +58,32 @@ const kindFilters: Array<{ id: NodeKindFilter; label: string }> = [
 ];
 
 const nodeTypeTone: Record<GraphNode['type'], { stroke: string; fill: string; marker: string }> = {
-  Function: { stroke: '#06b6d4', fill: '#0b1f28', marker: '#22d3ee' },
-  Class: { stroke: '#f59e0b', fill: '#261b0c', marker: '#fbbf24' },
-  File: { stroke: '#718096', fill: '#141b26', marker: '#9aa7b7' },
-  Route: { stroke: '#f43f5e', fill: '#29111b', marker: '#fb7185' },
-  Module: { stroke: '#3b82f6', fill: '#111e35', marker: '#77a9ff' },
-  Test: { stroke: '#10b981', fill: '#0c2419', marker: '#34d399' },
-  MCP: { stroke: '#8b5cf6', fill: '#1a122e', marker: '#a78bfa' },
+  Function: { stroke: 'rgb(var(--graph-function))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--graph-function))' },
+  Class: { stroke: 'rgb(var(--graph-class))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--graph-class))' },
+  Interface: { stroke: 'rgb(var(--graph-interface))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--graph-interface))' },
+  Type: { stroke: 'rgb(var(--graph-interface))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--graph-interface))' },
+  File: { stroke: 'rgb(var(--graph-file))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--graph-file))' },
+  Route: { stroke: 'rgb(var(--graph-route))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--graph-route))' },
+  Module: { stroke: 'rgb(var(--graph-module))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--graph-module))' },
+  Package: { stroke: 'rgb(var(--graph-package))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--graph-package))' },
+  Test: { stroke: 'rgb(var(--graph-test))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--graph-test))' },
+  MCP: { stroke: 'rgb(var(--ide-purple))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--ide-purple))' },
 };
 
 const getImpactTone = (node: GraphNode) => {
-  if (node.impactStatus === 'modified') return { stroke: '#f43f5e', fill: '#25101a', marker: '#fb7185' };
-  if (node.impactStatus === 'direct') return { stroke: '#f59e0b', fill: '#241a0d', marker: '#fbbf24' };
-  if (node.impactStatus === 'indirect') return { stroke: '#06b6d4', fill: '#0b1f28', marker: '#22d3ee' };
+  if (node.impactStatus === 'modified') return { stroke: 'rgb(var(--ide-rose))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--ide-rose))' };
+  if (node.impactStatus === 'direct') return { stroke: 'rgb(var(--ide-amber))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--ide-amber))' };
+  if (node.impactStatus === 'indirect') return { stroke: 'rgb(var(--ide-cyan))', fill: 'rgb(var(--ide-panel))', marker: 'rgb(var(--ide-cyan))' };
   return nodeTypeTone[node.type];
 };
 
 const areaColors: Record<string, { stroke: string; fill: string; text: string }> = {
-  frontend: { stroke: '#38bdf8', fill: 'rgba(14, 165, 233, 0.05)', text: '#38bdf8' },
-  backend: { stroke: '#a855f7', fill: 'rgba(168, 85, 247, 0.05)', text: '#c084fc' },
-  database: { stroke: '#f59e0b', fill: 'rgba(245, 158, 11, 0.05)', text: '#fbbf24' },
-  utilities: { stroke: '#10b981', fill: 'rgba(16, 185, 129, 0.05)', text: '#34d399' },
-  tests: { stroke: '#ec4899', fill: 'rgba(236, 72, 153, 0.05)', text: '#f472b6' },
-  core: { stroke: '#64748b', fill: 'rgba(100, 116, 139, 0.05)', text: '#94a3b8' },
+  frontend: { stroke: 'rgb(var(--ide-cyan))', fill: 'rgb(var(--ide-cyan) / 0.06)', text: 'rgb(var(--ide-cyan))' },
+  backend: { stroke: 'rgb(var(--ide-purple))', fill: 'rgb(var(--ide-purple) / 0.06)', text: 'rgb(var(--ide-purple))' },
+  database: { stroke: 'rgb(var(--ide-amber))', fill: 'rgb(var(--ide-amber) / 0.06)', text: 'rgb(var(--ide-amber))' },
+  utilities: { stroke: 'rgb(var(--ide-emerald))', fill: 'rgb(var(--ide-emerald) / 0.06)', text: 'rgb(var(--ide-emerald))' },
+  tests: { stroke: 'rgb(var(--ide-rose))', fill: 'rgb(var(--ide-rose) / 0.06)', text: 'rgb(var(--ide-rose))' },
+  core: { stroke: 'rgb(var(--ide-border-strong))', fill: 'rgb(var(--ide-surface) / 0.45)', text: 'rgb(var(--ide-text-muted))' },
 };
 
 export const KnowledgeGraphCanvas: React.FC = () => {
@@ -85,6 +103,12 @@ export const KnowledgeGraphCanvas: React.FC = () => {
     traceCallPath,
     revealFileInExplorer,
     setTargetEditorLine,
+    workspacePath,
+    setAttachedContextPaths,
+    graphSession,
+    updateGraphSession,
+    isGraphGuideOpen,
+    setIsGraphGuideOpen,
   } = useIDE();
 
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -99,13 +123,72 @@ export const KnowledgeGraphCanvas: React.FC = () => {
 
   const [kindFilter, setKindFilter] = useState<NodeKindFilter>('all');
   const [areaFilter, setAreaFilter] = useState<ArchAreaFilter>('all');
-  const [hideGenerated, setHideGenerated] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
+  const hideGenerated = graphSession.hideGenerated;
+  const setHideGenerated = (val: boolean | ((prev: boolean) => boolean)) =>
+    updateGraphSession((prev) => ({
+      ...prev,
+      hideGenerated: typeof val === 'function' ? val(prev.hideGenerated) : val,
+    }));
+  const searchQuery = graphSession.searchQuery;
+  const setSearchQuery = (q: string) => updateGraphSession({ searchQuery: q });
   const [impactModeOnly, setImpactModeOnly] = useState(false);
   const [activeCypherText, setActiveCypherText] = useState(GRAPH_QUERY_TEMPLATES[0].query);
   const [traceSymbol, setTraceSymbol] = useState('processPayment');
   const [traceDirection, setTraceDirection] = useState<'inbound' | 'outbound'>('inbound');
   const [traceDepth, setTraceDepth] = useState(3);
+  const isDetailsOpen = graphSession.isDetailsOpen;
+  const setIsDetailsOpen = (val: boolean | ((prev: boolean) => boolean)) =>
+    updateGraphSession((prev) => ({
+      ...prev,
+      isDetailsOpen: typeof val === 'function' ? val(prev.isDetailsOpen) : val,
+    }));
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const explorationMode = graphSession.explorationMode;
+  const setExplorationMode = (mode: GraphExplorationMode) => updateGraphSession({ explorationMode: mode });
+  const expandedGroupKeys = useMemo(
+    () => new Set(graphSession.expandedGroupKeys),
+    [graphSession.expandedGroupKeys]
+  );
+  const setExpandedGroupKeys = (val: Set<string> | ((prev: Set<string>) => Set<string>)) =>
+    updateGraphSession((prev) => {
+      const nextSet = typeof val === 'function' ? val(new Set(prev.expandedGroupKeys)) : val;
+      return { ...prev, expandedGroupKeys: Array.from(nextSet) };
+    });
+  const expandedFileIds = useMemo(
+    () => new Set(graphSession.expandedFileIds),
+    [graphSession.expandedFileIds]
+  );
+  const setExpandedFileIds = (val: Set<string> | ((prev: Set<string>) => Set<string>)) =>
+    updateGraphSession((prev) => {
+      const nextSet = typeof val === 'function' ? val(new Set(prev.expandedFileIds)) : val;
+      return { ...prev, expandedFileIds: Array.from(nextSet) };
+    });
+  const groupRevealLimits = useMemo(
+    () => new Map(Object.entries(graphSession.groupRevealLimits)),
+    [graphSession.groupRevealLimits]
+  );
+  const setGroupRevealLimits = (val: Map<string, number> | ((prev: Map<string, number>) => Map<string, number>)) =>
+    updateGraphSession((prev) => {
+      const nextMap =
+        typeof val === 'function' ? val(new Map(Object.entries(prev.groupRevealLimits))) : val;
+      return { ...prev, groupRevealLimits: Object.fromEntries(nextMap.entries()) };
+    });
+  const selectedNodeId = graphSession.selectedNodeId;
+  const setSelectedNodeId = (id: string | null) => updateGraphSession({ selectedNodeId: id });
+  const [selectedEdgeFallback, setSelectedEdgeFallback] = useState<AggregatedGraphEdge | null>(null);
+  const setSelectedEdge = (edge: AggregatedGraphEdge | null) => {
+    setSelectedEdgeFallback(edge);
+    updateGraphSession({ selectedEdgeId: edge ? edge.id : null });
+  };
+  const focusedNodeId = graphSession.focusedNodeId;
+  const setFocusedNodeId = (id: string | null) => updateGraphSession({ focusedNodeId: id });
+  const scopedGroupKey = graphSession.scopedGroupKey;
+  const setScopedGroupKey = (key: string | null) => updateGraphSession({ scopedGroupKey: key });
+  const focusDepth = graphSession.focusDepth;
+  const setFocusDepth = (depth: 1 | 2 | 3) => updateGraphSession({ focusDepth: depth });
+  const edgeTypeFilter = graphSession.edgeTypeFilter;
+  const setEdgeTypeFilter = (filter: 'all' | 'IMPORTS' | 'CALLS') =>
+    updateGraphSession({ edgeTypeFilter: filter });
 
   // Smooth cursor-centered wheel zoom & trackpad pinch
   useEffect(() => {
@@ -280,6 +363,226 @@ export const KnowledgeGraphCanvas: React.FC = () => {
     });
     return Array.from(groups.values());
   }, [filteredNodes]);
+
+  // Progressive exploration layout computation (Scoped / Overview / Files / Symbols / Focus)
+  const layoutResult = useMemo(() => {
+    const baseNodes = filteredNodes;
+    const baseEdges =
+      edgeTypeFilter === 'all'
+        ? visibleEdges
+        : visibleEdges.filter((e) => e.type === edgeTypeFilter);
+
+    if (scopedGroupKey) {
+      return buildScopedGroupGraph(scopedGroupKey, graphNodes, baseEdges.length ? baseEdges : graphEdges, true);
+    }
+
+    if (explorationMode === 'focus' && focusedNodeId) {
+      return computeRadialFocusLayout(focusedNodeId, graphNodes, baseEdges.length ? baseEdges : graphEdges, focusDepth);
+    }
+
+    if (explorationMode === 'overview') {
+      const overview = buildArchitectureOverview(baseNodes, baseEdges, expandedGroupKeys, {
+        expandedFileIds,
+        groupRevealLimits,
+      });
+      return computeConnectedOverviewLayout(overview.nodes, overview.edges);
+    }
+
+    if (explorationMode === 'files') {
+      const fileOnly = baseNodes.filter((n) => n.type === 'File' || n.type === 'Route' || n.type === 'Test');
+      const fileIds = new Set(fileOnly.map((n) => n.id));
+      const fileEdges = baseEdges.filter((e) => fileIds.has(e.source) && fileIds.has(e.target));
+      return computeHierarchicalLayout(fileOnly, fileEdges, { horizontalGap: 110, verticalGap: 30 });
+    }
+
+    // 'symbols'
+    const symbolOnly = baseNodes.filter((n) => n.type !== 'File' && n.type !== 'Module');
+    const symIds = new Set(symbolOnly.map((n) => n.id));
+    const symEdges = baseEdges.filter((e) => symIds.has(e.source) && symIds.has(e.target));
+    return computeHierarchicalLayout(symbolOnly.length > 0 ? symbolOnly : baseNodes, symEdges, {
+      horizontalGap: 105,
+      verticalGap: 28,
+    });
+  }, [
+    filteredNodes,
+    visibleEdges,
+    edgeTypeFilter,
+    scopedGroupKey,
+    explorationMode,
+    focusedNodeId,
+    graphNodes,
+    graphEdges,
+    focusDepth,
+    expandedGroupKeys,
+    expandedFileIds,
+    groupRevealLimits,
+  ]);
+
+  const layoutNodeMap = useMemo(() => {
+    const map = new Map<string, PositionedGraphNode>();
+    layoutResult.nodes.forEach((n) => map.set(n.id, n));
+    return map;
+  }, [layoutResult.nodes]);
+
+  const selectedEdge = useMemo(() => {
+    if (!graphSession.selectedEdgeId) return null;
+    return (
+      layoutResult.edges.find((e) => e.id === graphSession.selectedEdgeId) ||
+      (selectedEdgeFallback?.id === graphSession.selectedEdgeId ? selectedEdgeFallback : null)
+    );
+  }, [graphSession.selectedEdgeId, layoutResult.edges, selectedEdgeFallback]);
+
+  // Reconcile selection & focus when nodes collapse, filter, or are deleted
+  useEffect(() => {
+    const reconciled = reconcileGraphSelection(selectedNodeId, focusedNodeId, layoutResult.nodes, graphNodes);
+    if (reconciled.selectedNodeId !== selectedNodeId) {
+      setSelectedNodeId(reconciled.selectedNodeId);
+      if (!reconciled.selectedNodeId) {
+        setSelectedGraphNode(null);
+      } else {
+        const nextNode = layoutNodeMap.get(reconciled.selectedNodeId) || null;
+        if (nextNode && !nextNode.isGroup) setSelectedGraphNode(nextNode);
+      }
+    }
+    if (reconciled.focusedNodeId !== focusedNodeId) {
+      setFocusedNodeId(reconciled.focusedNodeId);
+      if (!reconciled.focusedNodeId && explorationMode === 'focus') {
+        setExplorationMode('overview');
+      }
+    }
+  }, [selectedNodeId, focusedNodeId, layoutResult.nodes, graphNodes, layoutNodeMap, explorationMode, setSelectedGraphNode]);
+
+  const handleToggleGroup = (groupKey: string) => {
+    setExpandedGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+  };
+
+  const handleToggleFile = (fileId: string) => {
+    setExpandedFileIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(fileId)) next.delete(fileId);
+      else next.add(fileId);
+      return next;
+    });
+  };
+
+  const handleShowMoreInGroup = (groupKey: string) => {
+    setGroupRevealLimits((prev) => {
+      const next = new Map(prev);
+      const current = next.get(groupKey) ?? 16;
+      next.set(groupKey, current + 16);
+      return next;
+    });
+  };
+
+  const handleLocateSearchMatch = (node: GraphNode) => {
+    const { groupKey } = getExpansionPathForNode(node);
+    if (explorationMode === 'overview' && !scopedGroupKey) {
+      setExpandedGroupKeys((prev) => {
+        const next = new Set(prev);
+        next.add(groupKey);
+        return next;
+      });
+    }
+    setSelectedNodeId(node.id);
+    setSelectedGraphNode(node);
+    setSearchQuery('');
+  };
+
+  const handleExpandAllGroups = () => {
+    const keys = new Set<string>();
+    layoutResult.nodes.forEach((n) => {
+      if (n.groupKey) keys.add(n.groupKey);
+    });
+    graphNodes.forEach((n) => {
+      const parts = (n.path || '').replace(/\\/g, '/').replace(/^\/+/, '').split('/').filter(Boolean);
+      if (parts.length >= 3) keys.add(`${parts[0]}/${parts[1]}`);
+      else if (parts.length === 2) keys.add(parts[0]);
+    });
+    setExpandedGroupKeys(keys);
+  };
+
+  const handleCollapseAllGroups = () => {
+    setExpandedGroupKeys(new Set());
+  };
+
+  const handleSelectCanvasNode = (node: (GraphNode & Partial<PositionedGraphNode>) | null) => {
+    if (!node) {
+      setSelectedNodeId(null);
+      setSelectedGraphNode(null);
+      return;
+    }
+    setSelectedNodeId(node.id);
+    if (!node.isGroup) {
+      setSelectedGraphNode(node);
+    }
+  };
+
+  const handleEnterFocusMode = (node: GraphNode) => {
+    setSelectedEdge(null);
+    setSelectedNodeId(node.id);
+    setSelectedGraphNode(node);
+    setFocusedNodeId(node.id);
+    setScopedGroupKey(null);
+    setExplorationMode('focus');
+    setIsDetailsOpen(true);
+  };
+
+  const workspaceDragId = getWorkspaceDragId(workspacePath);
+
+  const getSourceSnippet = (filePath?: string, line?: number): string | null => {
+    if (!filePath || !line || line < 1) return null;
+    const norm = filePath.replace(/\\/g, '/');
+    const f = files.find((item) => item.path.replace(/\\/g, '/') === norm);
+    if (!f) return null;
+    const lines = f.content.split('\n');
+    const raw = lines[line - 1];
+    return raw !== undefined ? raw.trim() : null;
+  };
+
+  const handleOpenSourceLocation = (filePath: string, line?: number) => {
+    const norm = filePath.replace(/\\/g, '/');
+    const targetFile = files.find((f) => f.path.replace(/\\/g, '/') === norm);
+    if (!targetFile) return;
+    openFile(targetFile.id);
+    if (line && line > 0) setTargetEditorLine(line);
+    setActiveView('editor');
+  };
+
+  const handleRevealNodeInExplorer = (node: GraphNode) => {
+    const targetFile = findOwningFile(node);
+    if (targetFile) {
+      revealFileInExplorer(targetFile.id);
+    }
+  };
+
+  const handleAddNodeToAiContext = (node: GraphNode) => {
+    const targetFile = findOwningFile(node);
+    const targetPath = targetFile?.path || node.path;
+    if (!targetPath) return;
+    setAttachedContextPaths((prev) => (prev.includes(targetPath) ? prev : [...prev, targetPath]));
+  };
+
+  const handleDropWorkspaceFile = (file: ProjectFile) => {
+    const fileNode = graphNodes.find((n) => n.id === `node-file-${file.id}` || n.path === file.path);
+    if (!fileNode) return;
+    const { groupKey } = getExpansionPathForNode(fileNode);
+    if (explorationMode === 'overview' && !scopedGroupKey) {
+      setExpandedGroupKeys((prev) => {
+        const next = new Set(prev);
+        next.add(groupKey);
+        return next;
+      });
+    }
+    setSelectedEdge(null);
+    setSelectedNodeId(fileNode.id);
+    setSelectedGraphNode(fileNode);
+    setIsDetailsOpen(true);
+  };
 
   // Stable matching to find owning ProjectFile for a graph node (path & ID based, no filename-only collisions)
   const findOwningFile = (node: GraphNode | null): ProjectFile | undefined => {
@@ -529,9 +832,9 @@ export const KnowledgeGraphCanvas: React.FC = () => {
             role="tab"
             aria-selected={isSelected}
             onClick={() => setGraphTab(id)}
-            className={`ide-focus-ring flex min-h-[36px] shrink-0 items-center gap-2 border-b-2 px-3 text-[10px] font-medium whitespace-nowrap ${isSelected ? 'border-ide-cyan text-ide-text' : 'border-transparent text-ide-muted hover:bg-ide-hover hover:text-ide-text'}`}
+            className={`ide-focus-ring flex h-9 shrink-0 items-center gap-2 border-b-2 px-3 font-sans text-[13px] font-medium whitespace-nowrap transition-colors ${isSelected ? 'border-ide-focus text-ide-strong' : 'border-transparent text-ide-muted hover:bg-ide-hover hover:text-ide-text'}`}
           >
-            <Icon className={`h-3.5 w-3.5 ${isSelected ? 'text-ide-cyan' : 'text-ide-subtle'}`} aria-hidden="true" />
+            <Icon className={`h-4 w-4 ${isSelected ? 'text-ide-focus' : 'text-ide-subtle'}`} aria-hidden="true" />
             {label}
           </button>
         );
@@ -540,58 +843,299 @@ export const KnowledgeGraphCanvas: React.FC = () => {
   );
 
   const renderNodeInspector = () => {
-    if (!selectedGraphNode) {
+    if (!isDetailsOpen) return null;
+
+    if (selectedEdge) {
+      const srcLabel = layoutNodeMap.get(selectedEdge.source)?.label || nodeMap.get(selectedEdge.source)?.label || selectedEdge.source;
+      const tgtLabel = layoutNodeMap.get(selectedEdge.target)?.label || nodeMap.get(selectedEdge.target)?.label || selectedEdge.target;
+      const underlying = selectedEdge.underlyingEdges || [];
+      const groupedByType = new Map<string, typeof underlying>();
+      for (const edgeItem of underlying) {
+        const list = groupedByType.get(edgeItem.type) || [];
+        list.push(edgeItem);
+        groupedByType.set(edgeItem.type, list);
+      }
+
       return (
-        <aside className="flex max-h-[38%] shrink-0 flex-col overflow-y-auto border-t border-ide-border bg-ide-sidebar xl:max-h-none xl:w-[320px] xl:border-l xl:border-t-0" aria-label="Selected graph node evidence">
-          <div className="flex min-h-[42px] items-center justify-between border-b border-ide-border px-3">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-ide-muted">Node evidence</span>
-            <span className="font-mono text-[10px] text-ide-subtle">No selection</span>
-          </div>
-          <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
-            <Network className="mb-2 h-8 w-8 text-ide-subtle/50" />
-            <p className="font-mono text-xs text-ide-muted">Select any node on the graph</p>
-            <p className="mt-1 text-[11px] text-ide-subtle">Inspect real incoming callers, outgoing dependencies, and focus connected paths.</p>
-          </div>
-        </aside>
+        <ResizablePanel
+          direction="horizontal"
+          handlePosition="start"
+          defaultSize={340}
+          minSize={260}
+          maxSize={480}
+          ariaLabel="Resize graph details panel"
+          className="border-l border-ide-border bg-ide-sidebar"
+        >
+          <aside className="flex h-full flex-col overflow-y-auto font-sans" aria-label="Selected relationship details">
+            <div className="flex h-10 items-center justify-between border-b border-ide-border px-3">
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className="font-semibold text-ide-strong">Relationship</span>
+                <span className="rounded-ide-small border border-ide-border bg-ide-surface px-1.5 py-0.5 text-[11px] font-medium text-ide-focus">
+                  {selectedEdge.label || selectedEdge.type}
+                </span>
+              </div>
+              <IconButton size="sm" label="Clear edge selection" onClick={() => setSelectedEdge(null)}>
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </IconButton>
+            </div>
+
+            <div className="flex flex-1 flex-col gap-4 p-4">
+              <div className="rounded-ide-panel border border-ide-border bg-ide-panel p-2.5">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-ide-strong">
+                  <span className="truncate">{srcLabel}</span>
+                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ide-focus" aria-hidden="true" />
+                  <span className="truncate">{tgtLabel}</span>
+                </div>
+                <div className="mt-1 font-mono text-[10px] text-ide-muted">
+                  {underlying.length} underlying {underlying.length === 1 ? 'relationship' : 'relationships'}
+                </div>
+              </div>
+
+              {underlying.length === 0 ? (
+                <div className="rounded border border-dashed border-ide-border p-3 text-xs text-ide-subtle">
+                  Structural containment relationship (non-code dependency).
+                </div>
+              ) : (
+                Array.from(groupedByType.entries()).map(([relType, items]) => (
+                  <div key={relType} className="space-y-1.5">
+                    <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em] text-ide-subtle">
+                      <span>{relType}</span>
+                      <span>{items.length}</span>
+                    </div>
+                    <div className="divide-y divide-ide-border rounded-ide-small border border-ide-border bg-ide-surface/30">
+                      {items.map((item) => {
+                        const snippet = getSourceSnippet(item.sourceFilePath, item.sourceLine);
+                        const targetSym = nodeMap.get(item.target);
+                        return (
+                          <div key={item.id} className="space-y-1 p-2 text-[11px]">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate font-medium text-ide-strong">
+                                {targetSym?.label || item.target}
+                              </span>
+                              {item.resolutionStatus && (
+                                <span className="rounded bg-ide-panel px-1.5 py-0.5 font-mono text-[9px] text-ide-muted">
+                                  {item.resolutionStatus}
+                                </span>
+                              )}
+                            </div>
+                            {item.sourceFilePath ? (
+                              <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-ide-muted">
+                                <span className="truncate">
+                                  {item.sourceFilePath}
+                                  {item.sourceLine ? `:${item.sourceLine}` : ''}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenSourceLocation(item.sourceFilePath!, item.sourceLine)}
+                                  className="shrink-0 text-ide-focus hover:underline"
+                                >
+                                  Go to source
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="font-mono text-[10px] text-ide-subtle">Source location unavailable</div>
+                            )}
+                            {snippet ? (
+                              <pre className="overflow-x-auto rounded bg-ide-bg px-2 py-1 font-mono text-[10px] text-ide-text">
+                                {snippet}
+                              </pre>
+                            ) : (
+                              <div className="font-mono text-[10px] text-ide-subtle">
+                                {item.evidence || 'Source snippet unavailable'}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </aside>
+        </ResizablePanel>
       );
     }
 
-    const nodeArea = selectedGraphNode.architectureArea || detectArchitectureArea(selectedGraphNode.path);
-    const isGen = selectedGraphNode.isGenerated || isGeneratedOrMigrationPath(selectedGraphNode.path, selectedGraphNode.label);
+    const positionedInspected = selectedNodeId ? layoutNodeMap.get(selectedNodeId) ?? null : null;
+    const inspectedNode: GraphNode | null =
+      positionedInspected || (selectedNodeId && !selectedNodeId.startsWith('group:') ? selectedGraphNode : null);
 
-    const inboundEdges = graphEdges.filter((e) => e.target === selectedGraphNode.id);
-    const outboundEdges = graphEdges.filter((e) => e.source === selectedGraphNode.id);
+    if (!inspectedNode) {
+      return (
+        <ResizablePanel
+          direction="horizontal"
+          handlePosition="start"
+          defaultSize={320}
+          minSize={240}
+          maxSize={460}
+          ariaLabel="Resize graph details panel"
+          className="border-l border-ide-border bg-ide-sidebar"
+        >
+          <aside className="flex h-full flex-col overflow-y-auto font-sans" aria-label="Selected graph node details">
+            <div className="flex h-10 items-center justify-between border-b border-ide-border px-3">
+              <span className="text-[12px] font-semibold text-ide-strong">Details</span>
+              <span className="text-[12px] text-ide-subtle">No selection</span>
+            </div>
+            <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
+              <Network className="mb-2 h-8 w-8 text-ide-subtle/60" />
+              <p className="text-[13px] font-medium text-ide-text">Select a node on the graph</p>
+              <p className="mt-1 text-[12px] text-ide-muted">Inspect incoming callers, outgoing dependencies, and related symbols.</p>
+            </div>
+          </aside>
+        </ResizablePanel>
+      );
+    }
+
+    if (positionedInspected?.isGroup && positionedInspected.groupKey) {
+      const groupKey = positionedInspected.groupKey;
+      const isExpanded = expandedGroupKeys.has(groupKey);
+      const childFiles = (positionedInspected.childIds || [])
+        .map((id: string) => nodeMap.get(id))
+        .filter((n: GraphNode | undefined): n is GraphNode => Boolean(n));
+      const groupEdges = layoutResult.edges.filter(
+        (e) => (e.source === positionedInspected.id || e.target === positionedInspected.id) && e.edgeKind !== 'contains',
+      );
+
+      return (
+        <ResizablePanel
+          direction="horizontal"
+          handlePosition="start"
+          defaultSize={320}
+          minSize={240}
+          maxSize={460}
+          ariaLabel="Resize graph details panel"
+          className="border-l border-ide-border bg-ide-sidebar"
+        >
+          <aside className="flex h-full flex-col overflow-y-auto font-sans" aria-label="Selected graph node details">
+            <div className="flex h-10 items-center justify-between border-b border-ide-border px-3">
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className="font-semibold text-ide-strong">Details</span>
+                <span className="rounded-ide-small border border-ide-border bg-ide-surface px-1.5 py-0.5 text-[11px] font-medium text-ide-focus">
+                  {positionedInspected.groupKind === 'architecture' ? 'Area' : 'Folder'}
+                </span>
+              </div>
+              <IconButton size="sm" label="Clear selection" onClick={() => handleSelectCanvasNode(null)}>
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </IconButton>
+            </div>
+
+            <div className="flex flex-1 flex-col gap-4 p-4">
+              <div>
+                <div className="text-sm font-semibold text-ide-strong break-all">{positionedInspected.label}</div>
+                <div className="mt-1 font-mono text-[10px] text-ide-muted">{positionedInspected.path}</div>
+              </div>
+
+              <dl className="divide-y divide-ide-border border-y border-ide-border font-mono text-[11px]">
+                <div className="flex items-center justify-between py-1.5">
+                  <dt className="text-ide-subtle">Files</dt>
+                  <dd className="text-ide-text font-semibold">{positionedInspected.fileCount || 0}</dd>
+                </div>
+                <div className="flex items-center justify-between py-1.5">
+                  <dt className="text-ide-subtle">Symbols</dt>
+                  <dd className="text-ide-text font-semibold">{positionedInspected.symbolCount || 0}</dd>
+                </div>
+                <div className="flex items-center justify-between py-1.5">
+                  <dt className="text-ide-subtle">Group links</dt>
+                  <dd className="text-ide-text font-semibold">{groupEdges.length}</dd>
+                </div>
+              </dl>
+
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="primary" onClick={() => handleToggleGroup(groupKey)}>
+                  {isExpanded ? 'Collapse group' : 'Expand group'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setScopedGroupKey(groupKey);
+                    setSelectedNodeId(null);
+                  }}
+                >
+                  Explore group
+                </Button>
+              </div>
+
+              <div>
+                <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-ide-subtle">
+                  Contained files ({childFiles.length})
+                </div>
+                <div className="max-h-56 divide-y divide-ide-border overflow-y-auto rounded-ide-small border border-ide-border bg-ide-surface/30">
+                  {childFiles.map((cf: GraphNode) => (
+                    <button
+                      key={cf.id}
+                      type="button"
+                      onClick={() => {
+                        if (!isExpanded) handleToggleGroup(groupKey);
+                        setSelectedNodeId(cf.id);
+                        setSelectedGraphNode(cf);
+                      }}
+                      className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-xs hover:bg-ide-hover"
+                    >
+                      <span className="truncate font-medium text-ide-text">{cf.label}</span>
+                      <span className="truncate font-mono text-[10px] text-ide-subtle">{cf.path}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </aside>
+        </ResizablePanel>
+      );
+    }
+
+    const activeNode = inspectedNode;
+    const nodeArea = activeNode.architectureArea || detectArchitectureArea(activeNode.path);
+    const isGen = activeNode.isGenerated || isGeneratedOrMigrationPath(activeNode.path, activeNode.label);
+
+    const inboundEdges = graphEdges.filter((e) => e.target === activeNode.id);
+    const outboundEdges = graphEdges.filter((e) => e.source === activeNode.id);
+    const definedSymbols =
+      activeNode.type === 'File' || activeNode.type === 'Route' || activeNode.type === 'Test'
+        ? graphNodes.filter(
+            (n) =>
+              n.id !== activeNode.id &&
+              n.type !== 'File' &&
+              n.path.replace(/\\/g, '/') === activeNode.path.replace(/\\/g, '/'),
+          )
+        : [];
 
     return (
-      <aside className="flex max-h-[45%] shrink-0 flex-col overflow-y-auto border-t border-ide-border bg-ide-sidebar xl:max-h-none xl:w-[320px] xl:border-l xl:border-t-0" aria-label="Selected graph node evidence">
-        <div className="flex min-h-[42px] items-center justify-between border-b border-ide-border px-3">
-          <div className="flex items-center gap-1.5 font-mono text-[10px]">
-            <span className="font-semibold uppercase tracking-[0.08em] text-ide-muted">Evidence</span>
-            <span className="text-ide-subtle">·</span>
-            <span className="rounded bg-ide-surface px-1.5 py-0.5 text-ide-cyan font-bold">{selectedGraphNode.type}</span>
+      <ResizablePanel
+        direction="horizontal"
+        handlePosition="start"
+        defaultSize={320}
+        minSize={240}
+        maxSize={460}
+        ariaLabel="Resize graph details panel"
+        className="border-l border-ide-border bg-ide-sidebar"
+      >
+        <aside className="flex h-full flex-col overflow-y-auto font-sans" aria-label="Selected graph node details">
+          <div className="flex h-10 items-center justify-between border-b border-ide-border px-3">
+            <div className="flex items-center gap-2 text-[12px]">
+              <span className="font-semibold text-ide-strong">Details</span>
+              <span className="rounded-ide-small border border-ide-border bg-ide-surface px-1.5 py-0.5 text-[11px] font-medium text-ide-cyan">
+                {activeNode.type}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="rounded-ide-small border border-ide-border px-1.5 py-0.5 text-[11px] text-ide-muted">
+                {nodeArea}
+              </span>
+              <IconButton size="sm" label="Clear selection" onClick={() => handleSelectCanvasNode(null)}>
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </IconButton>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="rounded border border-ide-border px-1.5 py-0.5 font-mono text-[9px] uppercase text-ide-purple">
-              {nodeArea}
-            </span>
-            <button
-              type="button"
-              onClick={handleClearFocus}
-              className="ide-focus-ring text-ide-subtle hover:text-ide-text"
-              title="Clear selection (Esc)"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
 
         <div className="flex flex-1 flex-col gap-4 p-4">
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold text-ide-text">
               <Code2 className="h-3.5 w-3.5 text-ide-cyan shrink-0" aria-hidden="true" />
-              <span className="break-all">{selectedGraphNode.label}</span>
+              <span className="break-all">{activeNode.label}</span>
             </div>
-            <div className="mt-1 break-all font-mono text-[10px] text-ide-muted">{selectedGraphNode.path}</div>
+            <div className="mt-1 break-all font-mono text-[10px] text-ide-muted">{activeNode.path}</div>
             {isGen && (
               <div className="mt-1.5 inline-flex items-center gap-1 rounded bg-ide-amber/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-amber">
                 Generated / Migration Artifact
@@ -599,22 +1143,52 @@ export const KnowledgeGraphCanvas: React.FC = () => {
             )}
           </div>
 
+          {definedSymbols.length > 0 && (
+            <div>
+              <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em] text-ide-subtle">
+                <span>Defined symbols ({definedSymbols.length})</span>
+                {explorationMode === 'overview' && !scopedGroupKey && (
+                  <button
+                    type="button"
+                    onClick={() => handleToggleFile(activeNode.id)}
+                    className="text-ide-focus hover:underline"
+                  >
+                    {expandedFileIds.has(activeNode.id) ? 'Collapse' : 'Expand'}
+                  </button>
+                )}
+              </div>
+              <div className="max-h-36 divide-y divide-ide-border overflow-y-auto rounded-ide-small border border-ide-border bg-ide-surface/30">
+                {definedSymbols.map((sym) => (
+                  <button
+                    key={sym.id}
+                    type="button"
+                    onClick={() => handleEnterFocusMode(sym)}
+                    className="flex w-full items-center justify-between gap-2 px-2 py-1 text-left font-mono text-[10px] hover:bg-ide-hover"
+                  >
+                    <span className="truncate text-ide-text">{sym.label}</span>
+                    <span className="text-ide-subtle">{sym.type}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <dl className="divide-y divide-ide-border border-y border-ide-border font-mono text-[10px]">
-            {selectedGraphNode.returnType && (
+            {activeNode.returnType && (
               <div className="flex items-center justify-between gap-3 py-1.5">
                 <dt className="text-ide-subtle">Return</dt>
-                <dd className="truncate text-ide-cyan">{selectedGraphNode.returnType}</dd>
+                <dd className="truncate text-ide-cyan">{activeNode.returnType}</dd>
               </div>
             )}
-            {selectedGraphNode.loc && (
+            {activeNode.loc && (
               <div className="flex items-center justify-between gap-3 py-1.5">
                 <dt className="text-ide-subtle">Lines of code</dt>
-                <dd className="text-ide-text">{selectedGraphNode.loc} LOC</dd>
+                <dd className="text-ide-text">{activeNode.loc} LOC</dd>
               </div>
             )}
             <div className="flex items-center justify-between gap-3 py-1.5">
               <dt className="text-ide-subtle">Impact status</dt>
-              <dd className="capitalize text-ide-text">{selectedGraphNode.impactStatus}</dd>
+              <dd className="capitalize text-ide-text">{activeNode.impactStatus}</dd>
             </div>
             <div className="flex items-center justify-between gap-3 py-1.5">
               <dt className="text-ide-subtle">Total connections</dt>
@@ -684,428 +1258,142 @@ export const KnowledgeGraphCanvas: React.FC = () => {
             )}
           </div>
 
-          <div className="mt-auto flex flex-col gap-2 border-t border-ide-border pt-3">
-            <button
-              type="button"
-              onClick={handleClearFocus}
-              className="ide-focus-ring flex min-h-[32px] items-center justify-center gap-1.5 border border-ide-border bg-ide-surface px-3 text-[10px] font-semibold text-ide-muted hover:text-ide-text hover:bg-ide-hover rounded-ide-control"
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => handleEnterFocusMode(activeNode)}
             >
-              <X className="h-3.5 w-3.5" /> Clear Focus (Esc)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setTraceSymbol(selectedGraphNode.label.replace('()', ''));
-                setGraphTab('trace');
-                traceCallPath(selectedGraphNode.label.replace('()', ''), 'inbound', 3);
+              Focus neighborhood
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => handleAddNodeToAiContext(activeNode)}
+            >
+              Add to AI context
+            </Button>
+            <span
+              draggable
+              onDragStart={(e) => {
+                const owner = findOwningFile(activeNode);
+                serializeDragPayload(e.dataTransfer, {
+                  kind: activeNode.type === 'File' || activeNode.type === 'Test' ? 'file' : 'symbol',
+                  workspaceId: workspaceDragId,
+                  fileId: owner?.id,
+                  filePath: owner?.path || activeNode.path,
+                  nodeId: activeNode.id,
+                  symbolName: activeNode.label,
+                  line: activeNode.line,
+                  label: activeNode.label,
+                });
               }}
-              className="ide-focus-ring flex min-h-[34px] items-center justify-center gap-2 border border-ide-amber/60 px-3 text-[10px] font-semibold text-ide-amber hover:bg-ide-amber/10 rounded-ide-control"
+              title="Drag to AI Assistant to attach context"
+              className="inline-flex cursor-grab items-center rounded-ide-small border border-dashed border-ide-borderStrong bg-ide-surface px-2 py-1 text-[10px] font-medium text-ide-muted hover:text-ide-strong"
             >
-              <GitFork className="h-3.5 w-3.5" aria-hidden="true" /> Trace call path
-            </button>
-            <button
-              type="button"
-              onClick={() => handleOpenNodeInEditor(selectedGraphNode)}
-              className="ide-focus-ring flex min-h-[34px] items-center justify-center gap-2 bg-ide-focus px-3 text-[10px] font-semibold text-white hover:bg-ide-focus/85 rounded-ide-control"
+              Drag to AI
+            </span>
+          </div>
+
+          <div className="mt-auto flex flex-col gap-2 border-t border-ide-border pt-3">
+            <Button size="sm" variant="primary" leftIcon={<ExternalLink className="h-3.5 w-3.5" />} onClick={() => handleOpenNodeInEditor(activeNode)}>
+              Open file
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<GitFork className="h-3.5 w-3.5" />}
+              onClick={() => {
+                setTraceSymbol(activeNode.label.replace('()', ''));
+                setGraphTab('trace');
+                traceCallPath(activeNode.label.replace('()', ''), 'inbound', 3);
+              }}
             >
-              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" /> Open in code editor
-            </button>
+              Call hierarchy
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setActiveView('cia')}>
+              Analyze impact
+            </Button>
+            <Button size="sm" variant="ghost" leftIcon={<X className="h-3.5 w-3.5" />} onClick={handleClearFocus}>
+              Clear focus (Esc)
+            </Button>
           </div>
         </div>
-      </aside>
+        </aside>
+      </ResizablePanel>
     );
   };
 
   const renderCanvas = () => (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden xl:flex-row">
-      <div
-        ref={containerRef}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        className={`relative min-h-[460px] min-w-0 flex-1 overflow-hidden bg-ide-bg select-none touch-none ${
-          isDragging ? 'cursor-grabbing' : 'cursor-grab'
-        }`}
-      >
-        {/* Top Control Toolbar */}
-        <div className="absolute inset-x-3 top-3 z-10 flex flex-wrap items-start justify-between gap-2 pointer-events-none">
-          <div className="flex flex-wrap items-center gap-1.5 border border-ide-border-strong bg-ide-panel/95 backdrop-blur-sm p-1.5 shadow-md pointer-events-auto rounded-ide-panel">
-            {/* Kind Filters */}
-            <div className="flex items-center gap-0.5">
-              {kindFilters.map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setKindFilter(id)}
-                  aria-pressed={kindFilter === id}
-                  className={`ide-focus-ring px-2 py-1 font-mono text-[10px] rounded-ide-control ${
-                    kindFilter === id
-                      ? 'bg-ide-selected text-ide-cyan font-bold border border-ide-cyan/40'
-                      : 'text-ide-muted hover:bg-ide-hover hover:text-ide-text'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            <span className="h-4 w-px bg-ide-border" aria-hidden="true" />
-
-            {/* Architecture Area Filter */}
-            {presentAreas.length > 1 && (
-              <div className="flex items-center gap-1 font-mono text-[10px]">
-                <label htmlFor="area-filter-select" className="text-ide-subtle text-[9px] uppercase">Area:</label>
-                <select
-                  id="area-filter-select"
-                  value={areaFilter}
-                  onChange={(e) => setAreaFilter(e.target.value as ArchAreaFilter)}
-                  className="ide-focus-ring bg-ide-surface border border-ide-border text-ide-text text-[10px] px-1.5 py-0.5 rounded-ide-control outline-none uppercase"
-                >
-                  <option value="all">ALL AREAS</option>
-                  {presentAreas.map((area) => (
-                    <option key={area} value={area}>{area.toUpperCase()}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <span className="h-4 w-px bg-ide-border" aria-hidden="true" />
-
-            {/* Clutter Reducer Toggle: Hide / Show Generated & Migration Files */}
-            <button
-              type="button"
-              onClick={() => setHideGenerated((prev) => !prev)}
-              aria-pressed={!hideGenerated}
-              className={`ide-focus-ring flex items-center gap-1.5 px-2 py-1 font-mono text-[10px] rounded-ide-control border ${
-                hideGenerated
-                  ? 'border-ide-border bg-ide-surface text-ide-muted hover:text-ide-text hover:bg-ide-hover'
-                  : 'border-ide-amber/50 bg-ide-amber/15 text-ide-amber font-semibold'
-              }`}
-              title={hideGenerated ? `Show ${generatedCount} hidden generated & migration nodes` : 'Hide generated & migration nodes'}
-            >
-              {hideGenerated ? <EyeOff className="h-3 w-3 text-ide-subtle" /> : <Eye className="h-3 w-3 text-ide-amber" />}
-              <span>{hideGenerated ? `Hide generated (${generatedCount})` : `Showing all (+${generatedCount} gen)`}</span>
-            </button>
-
-            {/* Impact Filter */}
-            <button
-              type="button"
-              onClick={() => setImpactModeOnly((active) => !active)}
-              aria-pressed={impactModeOnly}
-              className={`ide-focus-ring flex items-center gap-1 px-2 py-1 font-mono text-[10px] rounded-ide-control border ${
-                impactModeOnly
-                  ? 'border-ide-rose/40 bg-ide-rose/10 text-ide-rose font-bold'
-                  : 'border-transparent text-ide-muted hover:bg-ide-hover hover:text-ide-text'
-              }`}
-            >
-              <Flame className="h-3 w-3" aria-hidden="true" />
-              Impact only
-            </button>
-
-            {/* Focus Mode Reset Action */}
-            {selectedGraphNode && (
-              <button
-                type="button"
-                onClick={handleClearFocus}
-                className="ide-focus-ring flex items-center gap-1 rounded-ide-control border border-ide-amber/50 bg-ide-amber/15 px-2 py-1 font-mono text-[10px] font-semibold text-ide-amber hover:bg-ide-amber/25 transition-all"
-                title="Clear focus (Esc)"
-              >
-                <X className="h-3 w-3" />
-                <span>Clear Focus</span>
-              </button>
-            )}
-          </div>
-
-          {/* Search and Zoom Controls */}
-          <div className="flex items-center gap-1 border border-ide-border-strong bg-ide-panel/95 backdrop-blur-sm p-1.5 shadow-md pointer-events-auto rounded-ide-panel">
-            <label className="sr-only" htmlFor="graph-node-search">Search nodes or paths</label>
-            <Search className="h-3.5 w-3.5 text-ide-subtle ml-1" aria-hidden="true" />
-            <input
-              id="graph-node-search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search node / path…"
-              className="ide-focus-ring w-28 bg-transparent px-1.5 py-0.5 font-mono text-[10px] text-ide-text outline-none placeholder:text-ide-subtle md:w-40"
-            />
-            {searchQuery && (
-              <button type="button" onClick={() => setSearchQuery('')} className="p-0.5 text-ide-subtle hover:text-ide-text">
-                <X className="h-3 w-3" />
-              </button>
-            )}
-            <span className="h-4 w-px bg-ide-border" aria-hidden="true" />
-            <button
-              type="button"
-              onClick={() => zoomAtViewportCenter(1.2)}
-              className="ide-focus-ring flex h-6 w-6 items-center justify-center text-ide-muted hover:bg-ide-hover hover:text-ide-text rounded-ide-control"
-              title="Zoom in (+)"
-              aria-label="Zoom in"
-            >
-              <ZoomIn className="h-3.5 w-3.5" />
-            </button>
-            <span className="min-w-[34px] text-center font-mono text-[9px] text-ide-muted select-none">
-              {Math.round(zoom * 100)}%
-            </span>
-            <button
-              type="button"
-              onClick={() => zoomAtViewportCenter(0.8)}
-              className="ide-focus-ring flex h-6 w-6 items-center justify-center text-ide-muted hover:bg-ide-hover hover:text-ide-text rounded-ide-control"
-              title="Zoom out (-)"
-              aria-label="Zoom out"
-            >
-              <ZoomOut className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={resetView}
-              className="ide-focus-ring flex h-6 w-6 items-center justify-center text-ide-muted hover:bg-ide-hover hover:text-ide-text rounded-ide-control"
-              title="Reset view (Fit to canvas)"
-              aria-label="Reset view"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-
-        {/* SVG Interactive Knowledge Graph */}
-        <svg
-          className="h-full w-full block"
-          role="img"
-          aria-label={`Knowledge graph showing ${filteredNodes.length} of ${graphNodes.length} nodes`}
-        >
-          <defs>
-            <pattern
-              id="ledger-graph-grid"
-              width={32 * zoom}
-              height={32 * zoom}
-              patternUnits="userSpaceOnUse"
-              patternTransform={`translate(${pan.x % (32 * zoom)}, ${pan.y % (32 * zoom)})`}
-            >
-              <path d={`M ${32 * zoom} 0 L 0 0 0 ${32 * zoom}`} fill="none" stroke="#161c2b" strokeWidth="0.8" />
-            </pattern>
-            <marker id="ledger-graph-arrow" markerWidth="8" markerHeight="6" refX="14" refY="3" orient="auto">
-              <polygon points="0 0, 8 3, 0 6" fill="#718096" opacity="0.8" />
-            </marker>
-            <marker id="ledger-graph-arrow-focused" markerWidth="8" markerHeight="6" refX="14" refY="3" orient="auto">
-              <polygon points="0 0, 8 3, 0 6" fill="#38bdf8" />
-            </marker>
-            <marker id="ledger-graph-arrow-impact" markerWidth="8" markerHeight="6" refX="14" refY="3" orient="auto">
-              <polygon points="0 0, 8 3, 0 6" fill="#f59e0b" />
-            </marker>
-          </defs>
-
-          {/* Clickable canvas background: clears focus when clicked directly without dragging */}
-          <rect
-            width="100%"
-            height="100%"
-            fill="url(#ledger-graph-grid)"
-            data-canvas-bg="true"
-          />
-
-          {/* Pan & Zoom Canvas Content Group */}
-          <g
-            transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}
-            className="origin-top-left pointer-events-auto"
-          >
-            {/* Architecture Grouping Boundaries */}
-            {areaGroups.map((group) => {
-              const theme = areaColors[group.area] || areaColors.core;
-              const boxX = group.minX - 85;
-              const boxY = group.minY - 55;
-              const boxW = Math.max(340, group.maxX - group.minX + 310);
-              const boxH = Math.max(160, group.maxY - group.minY + 95);
-
-              return (
-                <g key={group.area} className="pointer-events-none select-none">
-                  <rect
-                    x={boxX}
-                    y={boxY}
-                    width={boxW}
-                    height={boxH}
-                    rx={8}
-                    fill={theme.fill}
-                    stroke={theme.stroke}
-                    strokeWidth="1.2"
-                    strokeDasharray="4 4"
-                    opacity={selectedGraphNode ? 0.35 : 0.75}
-                  />
-                  <rect
-                    x={boxX + 12}
-                    y={boxY - 10}
-                    width={group.area.length * 8 + 48}
-                    height={20}
-                    rx={3}
-                    fill="#0f172a"
-                    stroke={theme.stroke}
-                    strokeWidth="1"
-                    opacity={selectedGraphNode ? 0.4 : 0.9}
-                  />
-                  <text
-                    x={boxX + 18}
-                    y={boxY + 4}
-                    fill={theme.text}
-                    fontSize="9.5"
-                    fontWeight="700"
-                    fontFamily="JetBrains Mono"
-                    letterSpacing="0.08em"
-                    opacity={selectedGraphNode ? 0.5 : 1}
-                  >
-                    {group.area.toUpperCase()} ({group.nodes.length})
-                  </text>
-                </g>
-              );
-            })}
-
-            {/* Graph Edges */}
-            {visibleEdges.map((edge) => {
-              const source = nodeMap.get(edge.source);
-              const target = nodeMap.get(edge.target);
-              if (!source || !target || source.x == null || source.y == null || target.x == null || target.y == null) return null;
-
-              const isFocused = connectedEdgeIds.has(edge.id);
-              const isFaded = selectedGraphNode != null && !isFocused;
-              const isImpact = edge.isImpactPath;
-
-              const edgeStroke = isFocused ? '#38bdf8' : isImpact ? '#f59e0b' : '#2b384e';
-              const edgeWidth = isFocused ? 2.4 : isImpact ? 2 : 1.2;
-              const edgeOpacity = isFaded ? 0.12 : 1;
-              const marker = isFocused
-                ? 'url(#ledger-graph-arrow-focused)'
-                : isImpact
-                  ? 'url(#ledger-graph-arrow-impact)'
-                  : 'url(#ledger-graph-arrow)';
-
-              return (
-                <g key={edge.id} opacity={edgeOpacity} className="transition-opacity duration-150">
-                  <line
-                    x1={source.x}
-                    y1={source.y}
-                    x2={target.x}
-                    y2={target.y}
-                    stroke={edgeStroke}
-                    strokeWidth={edgeWidth}
-                    strokeDasharray={edge.type === 'TESTS' ? '4 4' : edge.type === 'DEFINES' ? '2 2' : undefined}
-                    markerEnd={marker}
-                  />
-                  {edge.label && (
-                    <text
-                      x={(source.x + target.x) / 2}
-                      y={(source.y + target.y) / 2 - 4}
-                      fill={isFocused ? '#38bdf8' : isImpact ? '#fbbf24' : '#64748b'}
-                      fontSize={isFocused ? '9.5' : '8.5'}
-                      fontWeight={isFocused ? '600' : '400'}
-                      fontFamily="JetBrains Mono"
-                      textAnchor="middle"
-                    >
-                      {edge.label}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
-
-            {/* Graph Nodes */}
-            {filteredNodes.map((node) => {
-              const isSelected = selectedGraphNode?.id === node.id;
-              const isConnected = connectedNodeIds.has(node.id);
-              const isFaded = selectedGraphNode != null && !isSelected && !isConnected;
-              const tone = getImpactTone(node);
-
-              const strokeColor = isSelected ? '#3b82f6' : isConnected ? '#38bdf8' : tone.stroke;
-              const strokeWidth = isSelected ? 2.5 : isConnected ? 2 : 1.5;
-              const nodeOpacity = isFaded ? 0.16 : 1;
-
-              return (
-                <g
-                  key={node.id}
-                  data-graph-node-id={node.id}
-                  transform={`translate(${node.x ?? 140}, ${node.y ?? 140})`}
-                  role="button"
-                  tabIndex={0}
-                  focusable="true"
-                  aria-label={`${node.label}, ${node.type}, ${node.path}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSelectNode(node);
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenNodeInEditor(node);
-                  }}
-                  onKeyDown={(event) => handleNodeKeyDown(event, node)}
-                  className="cursor-pointer transition-opacity duration-150"
-                  opacity={nodeOpacity}
-                >
-                  <title>{`${node.label} (${node.type})\nPath: ${node.path}`}</title>
-                  {/* Node Card Background */}
-                  <rect
-                    x="-70"
-                    y="-19"
-                    width="140"
-                    height="38"
-                    rx="4"
-                    fill={tone.fill}
-                    stroke={strokeColor}
-                    strokeWidth={strokeWidth}
-                  />
-                  {/* Left accent stripe */}
-                  <rect x="-70" y="-19" width="4" height="38" rx="2" fill={tone.marker} />
-                  {/* Status dot */}
-                  <circle cx="-55" cy="0" r="3.5" fill={tone.marker} />
-                  {/* Label */}
-                  <text
-                    x="-44"
-                    y="4"
-                    fill="#f5f7fa"
-                    fontSize="10"
-                    fontWeight="500"
-                    fontFamily="JetBrains Mono"
-                  >
-                    {node.label.length > 13 ? `${node.label.substring(0, 12)}…` : node.label}
-                  </text>
-                  {/* Type badge on bottom right */}
-                  <text
-                    x="62"
-                    y="14"
-                    fill={tone.marker}
-                    fontSize="7.5"
-                    fontFamily="JetBrains Mono"
-                    textAnchor="end"
-                    className="uppercase"
-                  >
-                    {node.type}
-                  </text>
-                </g>
-              );
-            })}
-          </g>
-        </svg>
-
-        {/* Bottom Legend */}
-        <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-3 border border-ide-border bg-ide-panel/95 backdrop-blur-sm px-3 py-2 font-mono text-[10px] text-ide-muted rounded-ide-panel pointer-events-auto" aria-label="Graph legend">
-          {[
-            ['bg-ide-cyan', 'Function'],
-            ['bg-ide-amber', 'Class'],
-            ['bg-ide-rose', 'Route'],
-            ['bg-ide-emerald', 'Test'],
-            ['bg-ide-purple', 'MCP'],
-          ].map(([marker, label]) => (
-            <span key={label} className="flex items-center gap-1.5">
-              <span className={`h-1.5 w-1.5 ${marker}`} aria-hidden="true" />
-              {label}
-            </span>
-          ))}
-          <span className="border-l border-ide-border pl-3 text-ide-text">
-            Showing {filteredNodes.length}/{graphNodes.length} nodes · {visibleEdges.length} edges
-          </span>
-          {hideGenerated && generatedCount > 0 && (
-            <span className="text-ide-amber font-semibold">({generatedCount} generated hidden)</span>
-          )}
-          <span className="hidden xl:inline border-l border-ide-border pl-3 text-ide-subtle">
-            Drag to pan · Scroll/pinch to zoom
-          </span>
-        </div>
-      </div>
+      <ProgressiveGraphCanvas
+        allNodes={graphNodes}
+        allEdges={graphEdges}
+        files={files}
+        workspaceDragId={workspaceDragId}
+        layoutResult={layoutResult}
+        explorationMode={explorationMode}
+        onChangeMode={(mode) => {
+          setScopedGroupKey(null);
+          if (mode !== 'focus') setFocusedNodeId(null);
+          setExplorationMode(mode);
+        }}
+        focusDepth={focusDepth}
+        onChangeFocusDepth={(d) => setFocusDepth(d)}
+        selectedNodeId={selectedNodeId}
+        selectedEdgeId={selectedEdge?.id || null}
+        focusedNodeId={focusedNodeId}
+        scopedGroupKey={scopedGroupKey}
+        onEnterScopedGroup={(groupKey) => {
+          setScopedGroupKey(groupKey);
+          setSelectedNodeId(null);
+          setSelectedEdge(null);
+        }}
+        onExitScopedGroup={() => {
+          setScopedGroupKey(null);
+          setSelectedEdge(null);
+        }}
+        onSelectNode={(node) => {
+          setSelectedEdge(null);
+          handleSelectCanvasNode(node);
+        }}
+        onSelectEdge={(edge) => setSelectedEdge(edge)}
+        onOpenFile={(node) => handleOpenNodeInEditor(node)}
+        onOpenSourceLocation={handleOpenSourceLocation}
+        onRevealInExplorer={handleRevealNodeInExplorer}
+        onAddToAiContext={handleAddNodeToAiContext}
+        onAnalyzeImpact={(node) => {
+          handleSelectCanvasNode(node);
+          setActiveView('cia');
+        }}
+        onTraceCalls={(node) => {
+          setTraceSymbol(node.label.replace('()', ''));
+          setGraphTab('trace');
+          traceCallPath(node.label.replace('()', ''), 'inbound', 3);
+        }}
+        onDropWorkspaceFile={handleDropWorkspaceFile}
+        onToggleGroup={handleToggleGroup}
+        onToggleFile={handleToggleFile}
+        onShowMoreInGroup={handleShowMoreInGroup}
+        onExpandAllGroups={handleExpandAllGroups}
+        onCollapseAllGroups={handleCollapseAllGroups}
+        expandedGroupKeys={expandedGroupKeys}
+        expandedFileIds={expandedFileIds}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        onLocateSearchMatch={handleLocateSearchMatch}
+        edgeTypeFilter={edgeTypeFilter}
+        onEdgeTypeFilterChange={setEdgeTypeFilter}
+        hideGenerated={hideGenerated}
+        onToggleHideGenerated={() => setHideGenerated((v) => !v)}
+        generatedCount={generatedCount}
+        onFocusNode={handleEnterFocusMode}
+        initialViewport={graphSession.viewport}
+        onViewportChange={(viewport) => updateGraphSession({ viewport })}
+        manualPositionsRecord={graphSession.manualPositions}
+        onManualPositionsChange={(manualPositions) => updateGraphSession({ manualPositions })}
+        onOpenGuide={() => setIsGraphGuideOpen(true)}
+      />
       {renderNodeInspector()}
     </div>
   );
@@ -1411,25 +1699,29 @@ export const KnowledgeGraphCanvas: React.FC = () => {
   );
 
   return (
-    <section className="flex h-full min-h-0 flex-col overflow-hidden bg-ide-bg" data-purpose="knowledge-graph-workspace">
-      <header className="shrink-0 border-b border-ide-border bg-ide-shell">
-        <div className="flex min-h-[42px] flex-wrap items-center justify-between gap-3 px-4">
-          <div className="flex min-w-0 items-center gap-2 font-mono text-[10px]">
-            <span className="h-1.5 w-1.5 bg-ide-emerald" aria-hidden="true" />
-            <span className="text-ide-cyan font-semibold">IntelliCode AST Engine</span>
-            <span className="hidden text-ide-muted md:inline">TypeScript Compiler API &amp; AST Graph · In-Memory JS</span>
-          </div>
-          <div className="flex items-center gap-3 font-mono text-[10px] text-ide-subtle">
-            <span>Graph intelligence</span>
-            <span>{graphNodes.length} nodes · {graphEdges.length} edges</span>
-          </div>
+    <section className="flex h-full min-h-0 flex-col overflow-hidden bg-ide-bg font-sans" data-purpose="knowledge-graph-workspace">
+      <header className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-ide-border bg-ide-shell px-3">
+        {renderGraphTabs()}
+        <div className="flex shrink-0 items-center gap-2 text-[12px] text-ide-muted">
+          <span className="hidden font-mono sm:inline">
+            {graphNodes.length} nodes · {graphEdges.length} edges
+          </span>
+          {graphTab === 'canvas' && (
+            <Button
+              size="sm"
+              variant={isDetailsOpen ? 'secondary' : 'ghost'}
+              onClick={() => setIsDetailsOpen((v) => !v)}
+            >
+              Details
+            </Button>
+          )}
         </div>
-        <div className="border-t border-ide-border px-3">{renderGraphTabs()}</div>
       </header>
       {graphTab === 'canvas' && renderCanvas()}
       {graphTab === 'cypher' && renderCypher()}
       {graphTab === 'trace' && renderTrace()}
       {graphTab === 'clusters' && renderClusters()}
+      <GraphGuideDialog open={isGraphGuideOpen} onClose={() => setIsGraphGuideOpen(false)} />
     </section>
   );
 };

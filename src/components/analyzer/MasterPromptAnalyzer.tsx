@@ -1,29 +1,16 @@
 import React, { useState } from 'react';
+import { Cpu, Network, RefreshCw, Save, ShieldCheck, Sparkles } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
-import { 
-  Sparkles, 
-  Cpu, 
-  Database, 
-  RefreshCw, 
-  CheckCircle2, 
-  FileCode, 
-  Code2, 
-  ShieldCheck, 
-  Save, 
-  Plus, 
-  Layers,
-  Terminal
-} from 'lucide-react';
+import { Badge, Button, EmptyState, Input, Textarea } from '../ui';
 
 export const MasterPromptAnalyzer: React.FC = () => {
-  const { 
-    masterPrompt, 
-    setMasterPrompt, 
-    files, 
-    rebuildAST, 
-    isAnalyzingAST, 
-    tokensSaved,
-    setActiveView 
+  const {
+    masterPrompt,
+    setMasterPrompt,
+    files,
+    rebuildAST,
+    isAnalyzingAST,
+    setActiveView,
   } = useIDE();
 
   const [projectName, setProjectName] = useState(masterPrompt.projectName);
@@ -32,145 +19,115 @@ export const MasterPromptAnalyzer: React.FC = () => {
   const [savedStatus, setSavedStatus] = useState(false);
 
   const handleSave = () => {
-    setMasterPrompt(prev => ({
+    setMasterPrompt((prev) => ({
       ...prev,
       projectName,
       requirements,
-      architecture
+      architecture,
     }));
     setSavedStatus(true);
     rebuildAST();
     setTimeout(() => setSavedStatus(false), 2500);
   };
 
-  // Aggregate all symbols from files
-  const allSymbols = files.flatMap(f => (f.symbols || []).map(s => ({ ...s, filePath: f.path, fileName: f.name })));
+  const allSymbols = files.flatMap((f) =>
+    (f.symbols || []).map((s) => ({ ...s, filePath: f.path, fileName: f.name }))
+  );
 
   return (
-    <div className="flex-1 bg-ide-bg h-[calc(100vh-3.5rem-1.75rem)] overflow-y-auto p-6 select-none font-sans">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-ide-border">
+    <section className="h-full overflow-y-auto bg-ide-bg p-6 font-sans" data-purpose="prompt-analyzer-workspace">
+      <div className="mx-auto max-w-6xl space-y-6">
+        <header className="flex flex-col justify-between gap-4 border-b border-ide-border pb-4 md:flex-row md:items-center">
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="p-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
-                <Sparkles className="w-5 h-5" />
-              </div>
-              <h1 className="text-xl font-bold text-white">Master Prompt & Project Analyzer</h1>
-              <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                Persistent Project Intelligence Layer
-              </span>
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-ide-purple" aria-hidden="true" />
+              <h1 className="text-[20px] font-semibold text-ide-strong">Prompt analyzer</h1>
+              <Badge variant="neutral">Project context</Badge>
             </div>
-            <p className="text-xs text-slate-400 max-w-2xl">
-              The Master Prompt grounds the Project Analyzer to parse the source code into an Abstract Syntax Tree (AST), extract symbol tables, and build the shared Knowledge Graph.
+            <p className="mt-1 max-w-2xl text-[12px] text-ide-muted">
+              Define project requirements and architectural invariants included in AST indexing and AI project context.
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              leftIcon={<RefreshCw className={`h-4 w-4 ${isAnalyzingAST ? 'animate-spin' : ''}`} />}
               onClick={() => rebuildAST()}
               disabled={isAnalyzingAST}
-              className="px-3 py-2 rounded-lg bg-ide-panel hover:bg-ide-hover border border-ide-border text-slate-300 text-xs font-mono flex items-center gap-2 transition-colors"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isAnalyzingAST ? 'animate-spin text-cyan-400' : ''}`} />
-              <span>{isAnalyzingAST ? 'Rebuilding AST...' : 'Incremental Re-Index'}</span>
-            </button>
-
-            <button
+              {isAnalyzingAST ? 'Indexing…' : 'Re-index AST'}
+            </Button>
+            <Button
+              variant="primary"
+              leftIcon={<Save className="h-4 w-4" />}
               onClick={handleSave}
-              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-2 transition-colors shadow-sm"
             >
-              <Save className="w-3.5 h-3.5" />
-              <span>{savedStatus ? 'Saved & Synced' : 'Save Master Prompt'}</span>
-            </button>
+              {savedStatus ? 'Saved' : 'Save specification'}
+            </Button>
+          </div>
+        </header>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="rounded-ide-panel border border-ide-border bg-ide-panel p-4">
+            <div className="text-[12px] text-ide-muted">AST fingerprint</div>
+            <div className="mt-1 font-mono text-[16px] font-semibold text-ide-strong">
+              {masterPrompt.astVersion}
+            </div>
+            <p className="mt-1 text-[12px] text-ide-subtle">Current workspace symbol hash</p>
+          </div>
+
+          <div className="rounded-ide-panel border border-ide-border bg-ide-panel p-4">
+            <div className="text-[12px] text-ide-muted">Indexed symbols</div>
+            <div className="mt-1 font-mono text-[16px] font-semibold text-ide-emerald">
+              {allSymbols.length}
+            </div>
+            <p className="mt-1 text-[12px] text-ide-subtle">Extracted across {files.length} file(s)</p>
+          </div>
+
+          <div className="rounded-ide-panel border border-ide-border bg-ide-panel p-4">
+            <div className="text-[12px] text-ide-muted">Workspace files</div>
+            <div className="mt-1 font-mono text-[16px] font-semibold text-ide-strong">
+              {files.length}
+            </div>
+            <p className="mt-1 text-[12px] text-ide-subtle">Live in-memory AST &amp; symbol index</p>
           </div>
         </div>
 
-        {/* Intelligence Status Banner */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="p-4 rounded-xl bg-ide-panel border border-ide-border">
-            <span className="text-xs font-mono text-slate-400">Active AST Fingerprint</span>
-            <div className="my-2">
-              <span className="text-xl font-bold font-mono text-cyan-400">{masterPrompt.astVersion}</span>
-            </div>
-            <p className="text-[11px] text-slate-400">SHA hash of parsed symbols</p>
-          </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <div className="space-y-4 rounded-ide-panel border border-ide-border bg-ide-panel p-5 lg:col-span-7">
+            <h2 className="text-[14px] font-semibold text-ide-strong">Project specification</h2>
 
-          <div className="p-4 rounded-xl bg-ide-panel border border-ide-border">
-            <span className="text-xs font-mono text-slate-400">Indexed Symbols</span>
-            <div className="my-2">
-              <span className="text-xl font-bold font-mono text-emerald-400">{allSymbols.length} Symbols</span>
-            </div>
-            <p className="text-[11px] text-slate-400">Across {files.length} project files</p>
-          </div>
+            <Input
+              label="Project name"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+            />
 
-          <div className="p-4 rounded-xl bg-ide-panel border border-ide-border">
-            <span className="text-xs font-mono text-slate-400">Persistent Cache Size</span>
-            <div className="my-2">
-              <span className="text-xl font-bold font-mono text-white">{(masterPrompt.activeTokensCount / 1000).toFixed(1)}k tokens</span>
-            </div>
-            <p className="text-[11px] text-slate-400">Cached in unified memory</p>
-          </div>
+            <Textarea
+              label="Requirements"
+              rows={4}
+              value={requirements}
+              onChange={(e) => setRequirements(e.target.value)}
+            />
 
-          <div className="p-4 rounded-xl bg-ide-panel border border-ide-border">
-            <span className="text-xs font-mono text-slate-400">Indexed Workspace Files</span>
-            <div className="my-2">
-              <span className="text-xl font-bold font-mono text-emerald-400">{files.length} files</span>
-            </div>
-            <p className="text-[11px] text-slate-400">Live in-memory AST & symbol index</p>
-          </div>
-        </div>
+            <Textarea
+              label="Architecture notes"
+              rows={5}
+              value={architecture}
+              onChange={(e) => setArchitecture(e.target.value)}
+              className="font-mono text-[12px]"
+            />
 
-        {/* Master Prompt Form & Symbol Indexer */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Master Prompt Definition (7 cols) */}
-          <div className="lg:col-span-7 bg-ide-panel border border-ide-border rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-ide-border">
-              <h2 className="text-sm font-bold text-white font-mono flex items-center gap-2">
-                <Code2 className="w-4 h-4 text-cyan-400" />
-                <span>Master Prompt Grounding Specification</span>
-              </h2>
-              <span className="text-[10px] font-mono text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
-                Continuous Watcher Active
-              </span>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-mono text-slate-300">Project Identifier:</label>
-              <input
-                type="text"
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                className="w-full bg-code p-2.5 rounded-lg border border-ide-border text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500/60"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-mono text-slate-300">System Requirements & Invariants:</label>
-              <textarea
-                rows={4}
-                value={requirements}
-                onChange={(e) => setRequirements(e.target.value)}
-                className="w-full bg-code p-3 rounded-lg border border-ide-border text-xs font-sans text-slate-200 focus:outline-none focus:border-cyan-500/60 leading-relaxed"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-mono text-slate-300">Architecture Blueprint & Layering:</label>
-              <textarea
-                rows={5}
-                value={architecture}
-                onChange={(e) => setArchitecture(e.target.value)}
-                className="w-full bg-code p-3 rounded-lg border border-ide-border text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500/60 leading-relaxed"
-              />
-            </div>
-
-            <div className="pt-2">
-              <h4 className="text-xs font-mono uppercase text-slate-400 mb-2">Immutable Architectural Invariants:</h4>
+            <div className="space-y-2 pt-1">
+              <h3 className="text-[12px] font-semibold text-ide-muted">Architectural invariants</h3>
               <div className="space-y-1.5">
                 {masterPrompt.invariants.map((inv, idx) => (
-                  <div key={idx} className="p-2 rounded bg-ide-card border border-ide-border text-xs font-mono text-slate-300 flex items-center gap-2">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <div
+                    key={idx}
+                    className="flex items-center gap-2 rounded-ide-control border border-ide-border bg-ide-bg px-3 py-2 text-[12px] text-ide-text"
+                  >
+                    <ShieldCheck className="h-4 w-4 shrink-0 text-ide-emerald" aria-hidden="true" />
                     <span>{inv}</span>
                   </div>
                 ))}
@@ -178,50 +135,55 @@ export const MasterPromptAnalyzer: React.FC = () => {
             </div>
           </div>
 
-          {/* Extracted AST Symbol Table (5 cols) */}
-          <div className="lg:col-span-5 bg-ide-panel border border-ide-border rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-ide-border">
-              <h2 className="text-sm font-bold text-white font-mono flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-cyan-400" />
-                <span>Extracted AST Symbols ({allSymbols.length})</span>
+          <div className="space-y-4 rounded-ide-panel border border-ide-border bg-ide-panel p-5 lg:col-span-5">
+            <div className="flex items-center justify-between border-b border-ide-border pb-3">
+              <h2 className="flex items-center gap-2 text-[14px] font-semibold text-ide-strong">
+                <Cpu className="h-4 w-4 text-ide-cyan" aria-hidden="true" />
+                <span>Extracted symbols ({allSymbols.length})</span>
               </h2>
-              {/* Knowledge Graph disabled:
-              <button
+              <Button
+                size="sm"
+                variant="ghost"
+                leftIcon={<Network className="h-3.5 w-3.5" />}
                 onClick={() => setActiveView('graph')}
-                className="text-xs font-mono text-cyan-400 hover:underline"
               >
-                View Graph →
-              </button>
-              */}
+                Open graph
+              </Button>
             </div>
 
-            <div className="space-y-2 overflow-y-auto max-h-[500px] pr-1">
-              {allSymbols.map((sym) => (
-                <div
-                  key={sym.id}
-                  className="p-2.5 rounded-lg bg-ide-card border border-ide-border text-xs font-mono space-y-1 hover:border-slate-700 transition-colors"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-cyan-300 font-bold">{sym.name}</span>
-                    <span className="text-[10px] text-slate-500">Line {sym.line}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span className="truncate max-w-[180px]">{sym.fileName}</span>
-                    <span className="px-1.5 py-0.2 rounded bg-slate-800 uppercase text-slate-300 text-[9px]">
-                      {sym.kind}
-                    </span>
-                  </div>
-                  {sym.calledBy && sym.calledBy.length > 0 && (
-                    <div className="text-[10px] text-amber-400/90 pt-1">
-                      Callers: {sym.calledBy.join(', ')}
+            {allSymbols.length === 0 ? (
+              <EmptyState
+                icon={<Cpu className="h-5 w-5" />}
+                title="No symbols extracted"
+                description="Open or create TypeScript, JavaScript, Python, or C files to index symbols."
+              />
+            ) : (
+              <div className="max-h-[480px] space-y-2 overflow-y-auto pr-1">
+                {allSymbols.map((sym) => (
+                  <div
+                    key={sym.id}
+                    className="rounded-ide-control border border-ide-border bg-ide-bg p-3 text-[12px] space-y-1"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate font-mono font-medium text-ide-strong">{sym.name}</span>
+                      <span className="shrink-0 font-mono text-[11px] text-ide-subtle">Ln {sym.line}</span>
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-ide-muted">
+                      <span className="truncate font-mono">{sym.fileName}</span>
+                      <Badge variant="neutral">{sym.kind}</Badge>
+                    </div>
+                    {sym.calledBy && sym.calledBy.length > 0 && (
+                      <div className="pt-0.5 font-mono text-[11px] text-ide-amber">
+                        Callers: {sym.calledBy.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 };

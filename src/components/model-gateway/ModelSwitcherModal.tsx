@@ -1,15 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle,
   Check,
-  Database,
+  ChevronDown,
+  ChevronRight,
   Eye,
   EyeOff,
-  KeyRound,
   Plus,
-  Sparkles,
+  RefreshCw,
+  Search,
   Trash2,
-  X,
 } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 import {
@@ -17,6 +16,18 @@ import {
   testProviderConnection,
 } from '../../utils/aiService';
 import type { AIModel, AIProviderFormat } from '../../types/ide';
+import {
+  Badge,
+  Button,
+  Checkbox,
+  Dialog,
+  Divider,
+  IconButton,
+  Input,
+  NotificationBanner,
+  Select,
+  Tabs,
+} from '../ui';
 
 const PROVIDER_PRESETS: {
   label: string;
@@ -27,52 +38,61 @@ const PROVIDER_PRESETS: {
   exampleModel: string;
   requiresApiKey: boolean;
 }[] = [
-    {
-      label: 'Google Gemini',
-      provider: 'Google',
-      providerKey: 'google',
-      apiFormat: 'gemini',
-      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-      exampleModel: 'gemini-2.5-flash',
-      requiresApiKey: true,
-    },
-    {
-      label: 'OpenRouter',
-      provider: 'OpenRouter',
-      providerKey: 'openrouter',
-      apiFormat: 'openai',
-      baseUrl: 'https://openrouter.ai/api/v1',
-      exampleModel: 'anthropic/claude-3.5-sonnet',
-      requiresApiKey: true,
-    },
-    {
-      label: 'Groq',
-      provider: 'Groq',
-      providerKey: 'groq',
-      apiFormat: 'openai',
-      baseUrl: 'https://api.groq.com/openai/v1',
-      exampleModel: 'llama-3.3-70b-versatile',
-      requiresApiKey: true,
-    },
-    {
-      label: 'Ollama (Local)',
-      provider: 'Ollama',
-      providerKey: 'ollama',
-      apiFormat: 'openai',
-      baseUrl: 'http://localhost:11434/v1',
-      exampleModel: 'qwen2.5-coder:7b',
-      requiresApiKey: false,
-    },
-    {
-      label: 'Custom OpenAI-Compatible',
-      provider: 'Custom Provider',
-      providerKey: '',
-      apiFormat: 'openai',
-      baseUrl: 'https://api.example.com/v1',
-      exampleModel: 'my-model-id',
-      requiresApiKey: true,
-    },
-  ];
+  {
+    label: 'Google Gemini',
+    provider: 'Google',
+    providerKey: 'google',
+    apiFormat: 'gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    exampleModel: 'gemini-2.5-flash',
+    requiresApiKey: true,
+  },
+  {
+    label: 'OpenAI',
+    provider: 'OpenAI',
+    providerKey: 'openai',
+    apiFormat: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    exampleModel: 'gpt-4o',
+    requiresApiKey: true,
+  },
+  {
+    label: 'Anthropic',
+    provider: 'Anthropic',
+    providerKey: 'anthropic',
+    apiFormat: 'anthropic',
+    baseUrl: 'https://api.anthropic.com/v1',
+    exampleModel: 'claude-3-7-sonnet-latest',
+    requiresApiKey: true,
+  },
+  {
+    label: 'DeepSeek',
+    provider: 'DeepSeek',
+    providerKey: 'deepseek',
+    apiFormat: 'openai',
+    baseUrl: 'https://api.deepseek.com/v1',
+    exampleModel: 'deepseek-chat',
+    requiresApiKey: true,
+  },
+  {
+    label: 'Ollama (Local)',
+    provider: 'Ollama',
+    providerKey: 'ollama',
+    apiFormat: 'openai',
+    baseUrl: 'http://localhost:11434/v1',
+    exampleModel: 'qwen2.5-coder:7b',
+    requiresApiKey: false,
+  },
+  {
+    label: 'Custom OpenAI-Compatible',
+    provider: 'Custom Provider',
+    providerKey: '',
+    apiFormat: 'openai',
+    baseUrl: 'https://api.example.com/v1',
+    exampleModel: 'my-model-id',
+    requiresApiKey: true,
+  },
+];
 
 export const ModelSwitcherModal: React.FC = () => {
   const {
@@ -87,14 +107,14 @@ export const ModelSwitcherModal: React.FC = () => {
     providerStatuses,
     refreshAiKeyStatuses,
     setApiKey,
-    sendChatMessage,
-    masterPrompt,
   } = useIDE();
 
-  const [tab, setTab] = useState<'models' | 'custom'>('models');
+  const [tab, setTab] = useState<'picker' | 'providers'>('picker');
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedKeyProvider, setSelectedKeyProvider] = useState<string>(activeModel.providerKey);
   const [keyDraft, setKeyDraft] = useState<string>('');
   const [showKey, setShowKey] = useState(false);
+  const [showCustomForm, setShowCustomForm] = useState(false);
   const [testState, setTestState] = useState<{ status: 'idle' | 'testing' | 'ok' | 'error'; message?: string }>({
     status: 'idle',
   });
@@ -106,7 +126,6 @@ export const ModelSwitcherModal: React.FC = () => {
   const [customModelId, setCustomModelId] = useState('');
   const [customFormat, setCustomFormat] = useState<AIProviderFormat>('openai');
   const [customBaseUrl, setCustomBaseUrl] = useState('https://api.openai.com/v1');
-  const [customContextWindow, setCustomContextWindow] = useState('128k');
   const [customRequiresKey, setCustomRequiresKey] = useState(true);
   const [customApiKey, setCustomApiKey] = useState('');
   const [customError, setCustomError] = useState<string | null>(null);
@@ -115,31 +134,38 @@ export const ModelSwitcherModal: React.FC = () => {
     if (isModelSwitchingModalOpen) {
       setSelectedKeyProvider(activeModel.providerKey);
       setKeyDraft('');
+      setSearchQuery('');
       setTestState({ status: 'idle' });
       setCustomError(null);
       refreshAiKeyStatuses();
     }
-  }, [isModelSwitchingModalOpen, activeModel.providerKey]);
+  }, [isModelSwitchingModalOpen, activeModel.providerKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!isModelSwitchingModalOpen) return undefined;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsModelSwitchingModalOpen(false);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isModelSwitchingModalOpen, setIsModelSwitchingModalOpen]);
+  const filteredModels = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return allModels;
+    return allModels.filter(
+      (m) => m.name.toLowerCase().includes(q) || m.provider.toLowerCase().includes(q)
+    );
+  }, [allModels, searchQuery]);
 
-  if (!isModelSwitchingModalOpen) return null;
+  const uniqueProviders = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          allModels.map((m) => [
+            m.providerKey,
+            { providerKey: m.providerKey, providerName: m.provider, requiresApiKey: m.requiresApiKey !== false },
+          ])
+        ).values()
+      ),
+    [allModels]
+  );
 
   const handleSelectModel = (model: AIModel) => {
-    if (model.id !== activeModel.id) {
-      setActiveModel(model);
-      sendChatMessage(`[SYSTEM EVENT: Switched active model to ${model.name} (${model.provider}).]`);
-    }
+    setActiveModel(model);
     setSelectedKeyProvider(model.providerKey);
-    setKeyDraft('');
-    setTestState({ status: 'idle' });
+    setIsModelSwitchingModalOpen(false);
   };
 
   const handleSaveKey = async () => {
@@ -147,7 +173,7 @@ export const ModelSwitcherModal: React.FC = () => {
     setKeyDraft('');
     setTestState({
       status: 'ok',
-      message: keyDraft.trim() ? 'API key saved in local backend session.' : 'API key cleared.',
+      message: keyDraft.trim() ? 'API key saved for this session.' : 'API key removed.',
     });
   };
 
@@ -169,7 +195,7 @@ export const ModelSwitcherModal: React.FC = () => {
       setKeyDraft('');
     }
 
-    setTestState({ status: 'testing', message: `Testing ${modelForProvider.name}…` });
+    setTestState({ status: 'testing', message: `Testing ${modelForProvider.provider}…` });
     const res = await testProviderConnection({
       providerKey: selectedKeyProvider,
       format: modelForProvider.apiFormat,
@@ -179,17 +205,11 @@ export const ModelSwitcherModal: React.FC = () => {
     });
     await refreshAiKeyStatuses();
 
-    if (res.success) {
-      setTestState({
-        status: 'ok',
-        message: `Connected to ${modelForProvider.name}.`,
-      });
-    } else {
-      setTestState({
-        status: 'error',
-        message: res.error || 'Connection test failed.',
-      });
-    }
+    setTestState(
+      res.success
+        ? { status: 'ok', message: `Connected to ${modelForProvider.provider}.` }
+        : { status: 'error', message: res.error || 'Connection failed.' }
+    );
   };
 
   const handleSyncLiveModels = async () => {
@@ -210,7 +230,7 @@ export const ModelSwitcherModal: React.FC = () => {
       setKeyDraft('');
     }
 
-    setTestState({ status: 'testing', message: `Fetching available ${templateModel.provider} models…` });
+    setTestState({ status: 'testing', message: `Refreshing models from ${templateModel.provider}…` });
     const res = await fetchAvailableProviderModels({
       format: templateModel.apiFormat,
       baseUrl: templateModel.baseUrl,
@@ -231,27 +251,30 @@ export const ModelSwitcherModal: React.FC = () => {
     let added = 0;
     for (const m of res.models.slice(0, 12)) {
       if (!existingModelIds.has(m.modelId)) {
-        addCustomModel({
-          name: m.name,
-          modelId: m.modelId,
-          provider: templateModel.provider,
-          providerKey: templateModel.providerKey,
-          apiFormat: templateModel.apiFormat,
-          baseUrl: templateModel.baseUrl,
-          requiresApiKey: templateModel.requiresApiKey,
-          version: m.modelId,
-          badge: 'Synced from API',
-          contextWindow: m.contextWindow || '1M',
-          costPer1k: 'Provider',
-          description: m.description || `Live model synced from ${templateModel.provider} API`,
-        }, false);
-        added++;
+        addCustomModel(
+          {
+            name: m.name,
+            modelId: m.modelId,
+            provider: templateModel.provider,
+            providerKey: templateModel.providerKey,
+            apiFormat: templateModel.apiFormat,
+            baseUrl: templateModel.baseUrl,
+            requiresApiKey: templateModel.requiresApiKey,
+            version: m.modelId,
+            badge: 'Synced',
+            contextWindow: m.contextWindow || 'Provider',
+            costPer1k: 'Provider',
+            description: m.description || `Model from ${templateModel.provider}`,
+          },
+          false
+        );
+        added += 1;
       }
     }
 
     setTestState({
       status: 'ok',
-      message: `Found ${res.models.length} live ${templateModel.provider} model(s)${added > 0 ? ` — added ${added} new model(s) to list!` : ' (all listed).'}`,
+      message: `Found ${res.models.length} model(s)${added > 0 ? ` (${added} added)` : ''}.`,
     });
   };
 
@@ -259,7 +282,7 @@ export const ModelSwitcherModal: React.FC = () => {
     e.preventDefault();
     setCustomError(null);
     if (!customModelId.trim()) {
-      setCustomError('Model ID is required (e.g. gemini-2.5-pro or llama-3.3-70b-versatile).');
+      setCustomError('Model ID is required.');
       return;
     }
     if (!customBaseUrl.trim() && customFormat !== 'gemini') {
@@ -281,426 +304,326 @@ export const ModelSwitcherModal: React.FC = () => {
       baseUrl: customBaseUrl.trim() || 'https://generativelanguage.googleapis.com/v1beta',
       requiresApiKey: customRequiresKey,
       version: customModelId.trim(),
-      badge: 'Custom Integration',
-      contextWindow: customContextWindow.trim() || '128k',
+      badge: 'Custom',
+      contextWindow: 'Custom',
       costPer1k: 'Custom',
-      description: `Custom ${customFormat.toUpperCase()} endpoint (${customBaseUrl.trim()})`,
+      description: `Custom ${customFormat} endpoint`,
       apiKey: customApiKey.trim(),
     });
 
     setCustomName('');
     setCustomModelId('');
     setCustomApiKey('');
-    setTab('models');
+    setShowCustomForm(false);
+    setTab('picker');
   };
 
-  // Unique provider keys for the API Keys panel
-  const uniqueProviders = Array.from(
-    new Map(
-      allModels.map((m) => [
-        m.providerKey,
-        { providerKey: m.providerKey, providerName: m.provider, requiresApiKey: m.requiresApiKey !== false },
-      ])
-    ).values()
-  );
+  const selectedProviderMeta = uniqueProviders.find((p) => p.providerKey === selectedKeyProvider);
+  const selectedProviderConfigured = Boolean(configuredProviders[selectedKeyProvider]);
+  const selectedProviderStatus =
+    providerStatuses[selectedKeyProvider] || (selectedProviderConfigured ? 'configured' : 'disconnected');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="presentation" onClick={() => setIsModelSwitchingModalOpen(false)}>
-      <section
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col border border-ide-border-strong bg-ide-panel rounded-ide-panel shadow-lg"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="model-switcher-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="flex items-start justify-between gap-4 border-b border-ide-border px-4 py-3.5">
-          <div>
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-ide-cyan" aria-hidden="true" />
-              <h2 id="model-switcher-title" className="text-sm font-semibold text-ide-strong">
-                AI Model Gateway & Custom Providers
-              </h2>
-              <span className="font-mono text-[10px] text-ide-emerald">Active: {activeModel.name}</span>
-            </div>
-            <p className="mt-1 text-xs text-ide-muted">
-              Select Gemini, Claude, GPT-4o, DeepSeek, or add any custom provider / model with your API key.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsModelSwitchingModalOpen(false)}
-            className="ide-focus-ring flex h-8 w-8 items-center justify-center rounded-ide-control text-ide-muted hover:bg-ide-hover hover:text-ide-text"
-            aria-label="Close model gateway"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </header>
+    <Dialog
+      open={isModelSwitchingModalOpen}
+      onClose={() => setIsModelSwitchingModalOpen(false)}
+      title="AI models"
+      description="Choose an active model or configure provider credentials."
+      size="lg"
+    >
+      <div className="space-y-4">
+        <Tabs
+          ariaLabel="AI model sections"
+          activeId={tab}
+          onChange={(id) => setTab(id as 'picker' | 'providers')}
+          items={[
+            { id: 'picker', label: 'Select model' },
+            { id: 'providers', label: 'Provider settings' },
+          ]}
+        />
 
-        {/* Tabs */}
-        <div className="flex items-center gap-1 border-b border-ide-border bg-ide-surface px-4">
-          <button
-            type="button"
-            onClick={() => setTab('models')}
-            className={`ide-focus-ring border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${tab === 'models' ? 'border-ide-focus text-ide-strong' : 'border-transparent text-ide-muted hover:text-ide-text'
-              }`}
-          >
-            Models & API Keys ({allModels.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('custom')}
-            className={`ide-focus-ring flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${tab === 'custom' ? 'border-ide-focus text-ide-strong' : 'border-transparent text-ide-muted hover:text-ide-text'
-              }`}
-          >
-            <Plus className="h-3.5 w-3.5 text-ide-cyan" />
-            Add Custom Model / Provider
-          </button>
-          <div className="ml-auto hidden items-center gap-2 font-mono text-[10px] text-ide-subtle sm:flex">
-            <Database className="h-3.5 w-3.5 text-ide-cyan" aria-hidden="true" />
-            <span>AST: {masterPrompt.astVersion || 'Ready'}</span>
-          </div>
-        </div>
+        {tab === 'picker' ? (
+          <div className="space-y-3">
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search models or providers…"
+              aria-label="Search models"
+              leftAdornment={<Search className="h-4 w-4" />}
+            />
 
-        {tab === 'models' ? (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            {/* Model List */}
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {allModels.map((model) => {
-                const isSelected = model.id === activeModel.id;
-                const hasKey = Boolean(configuredProviders[model.providerKey]);
-                const pStatus = providerStatuses[model.providerKey] || (hasKey ? 'configured' : 'disconnected');
-                const needsKey = model.requiresApiKey !== false;
+            <div className="max-h-72 overflow-y-auto divide-y divide-ide-border rounded-ide-control border border-ide-border bg-ide-bg">
+              {filteredModels.length === 0 ? (
+                <div className="p-4 text-center text-[12px] text-ide-muted">
+                  No models match &ldquo;{searchQuery}&rdquo;.
+                </div>
+              ) : (
+                filteredModels.map((model) => {
+                  const isSelected = model.id === activeModel.id;
+                  const configured = model.requiresApiKey === false || Boolean(configuredProviders[model.providerKey]);
+                  const status = providerStatuses[model.providerKey];
+                  const availabilityLabel =
+                    model.requiresApiKey === false
+                      ? 'Local'
+                      : status === 'connected'
+                        ? 'Connected'
+                        : configured
+                          ? 'Configured'
+                          : 'Needs key';
 
-                return (
-                  <div
-                    key={model.id}
-                    className={`flex w-full items-start gap-3 border-b border-ide-border px-4 py-3 text-left transition-colors ${isSelected ? 'bg-ide-selected' : 'hover:bg-ide-hover'
+                  return (
+                    <div
+                      key={model.id}
+                      className={`flex items-center justify-between gap-3 px-3 py-2.5 transition-colors ${
+                        isSelected ? 'bg-ide-selected' : 'hover:bg-ide-hover'
                       }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleSelectModel(model)}
-                      className="ide-focus-ring flex min-w-0 flex-1 items-start gap-3 text-left"
-                      aria-pressed={isSelected}
                     >
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-ide-control border border-ide-border-strong bg-ide-card font-mono text-[10px] font-semibold text-ide-cyan">
-                        {model.name.substring(0, 2).toUpperCase()}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span className="text-xs font-semibold text-ide-strong">{model.name}</span>
-                          <span className="font-mono text-[10px] text-ide-subtle">{model.provider}</span>
-                          <span className="font-mono text-[10px] text-ide-cyan">{model.badge}</span>
-                          {needsKey ? (
-                            pStatus === 'connected' ? (
-                              <span className="rounded border border-ide-emerald/40 bg-ide-emerald/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-emerald">
-                                Connected
-                              </span>
-                            ) : hasKey ? (
-                              <span className="rounded border border-ide-cyan/40 bg-ide-cyan/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-cyan">
-                                Configured
-                              </span>
-                            ) : (
-                              <span className="rounded border border-ide-amber/40 bg-ide-amber/10 px-1.5 py-0.5 font-mono text-[9px] text-ide-amber">
-                                Disconnected
-                              </span>
-                            )
-                          ) : (
-                            <span className="rounded border border-ide-border px-1.5 py-0.5 font-mono text-[9px] text-ide-subtle">
-                              Local · {pStatus === 'connected' ? 'Connected' : 'Ready'}
-                            </span>
-                          )}
-                        </span>
-                        <span className="mt-1 block text-xs leading-relaxed text-ide-muted">{model.description}</span>
-                        <span className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10px] text-ide-subtle">
-                          <span>ID: {model.modelId}</span>
-                          <span>Context: {model.contextWindow}</span>
-                        </span>
-                      </span>
-                    </button>
-
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      {model.isCustom && (
-                        <button
-                          type="button"
-                          onClick={() => removeCustomModel(model.id)}
-                          className="ide-focus-ring flex h-6 w-6 items-center justify-center rounded-ide-control text-ide-subtle hover:bg-ide-hover hover:text-ide-rose"
-                          title="Remove custom model"
-                          aria-label={`Remove ${model.name}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
                       <button
                         type="button"
                         onClick={() => handleSelectModel(model)}
-                        className={`flex h-6 w-6 items-center justify-center rounded-ide-control border ${isSelected
-                          ? 'border-ide-emerald bg-ide-emerald text-ide-shell'
-                          : 'border-ide-border-strong text-transparent hover:border-ide-focus'
-                          }`}
-                        aria-label={isSelected ? 'Selected model' : 'Select model'}
+                        className="ide-focus-ring flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
                       >
-                        <Check className="h-3.5 w-3.5" />
+                        <div className="min-w-0">
+                          <div className="truncate font-sans text-[13px] font-medium text-ide-strong">
+                            {model.name}
+                          </div>
+                          <div className="truncate font-sans text-[12px] text-ide-muted">
+                            {model.provider}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Badge
+                            variant={
+                              availabilityLabel === 'Connected'
+                                ? 'success'
+                                : availabilityLabel === 'Needs key'
+                                  ? 'warning'
+                                  : 'neutral'
+                            }
+                          >
+                            {availabilityLabel}
+                          </Badge>
+                          {isSelected && <Check className="h-4 w-4 text-ide-focus" aria-hidden="true" />}
+                        </div>
                       </button>
+                      {model.isCustom && (
+                        <IconButton
+                          size="sm"
+                          variant="danger"
+                          label={`Remove ${model.name}`}
+                          onClick={() => removeCustomModel(model.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        </IconButton>
+                      )}
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
 
-            {/* API Key Configuration Bar */}
-            <div className="shrink-0 border-t border-ide-border bg-ide-surface p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs font-semibold text-ide-strong">
-                  <KeyRound className="h-3.5 w-3.5 text-ide-amber" aria-hidden="true" />
-                  <span>Provider API Key Configuration</span>
-                </div>
-                <select
-                  value={selectedKeyProvider}
-                  onChange={(e) => {
-                    const pKey = e.target.value;
-                    setSelectedKeyProvider(pKey);
-                    setKeyDraft('');
-                    setTestState({ status: 'idle' });
-                  }}
-                  aria-label="Select provider for API key"
-                  className="ide-focus-ring rounded-ide-control border border-ide-border-strong bg-ide-bg px-2.5 py-1 font-mono text-[11px] text-ide-text outline-none"
-                >
-                  {uniqueProviders.map((p) => (
-                    <option key={p.providerKey} value={p.providerKey}>
-                      {p.providerName} {configuredProviders[p.providerKey] ? '(Configured)' : '(Not Set)'}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="relative flex min-w-[220px] flex-1 items-center rounded-ide-control border border-ide-border-strong bg-ide-bg">
-                  <input
-                    type={showKey ? 'text' : 'password'}
-                    value={keyDraft}
-                    onChange={(e) => setKeyDraft(e.target.value)}
-                    placeholder={
-                      configuredProviders[selectedKeyProvider]
-                        ? `Key configured on backend for ${selectedKeyProvider} (paste new key to replace)…`
-                        : `Paste API key for ${selectedKeyProvider}…`
-                    }
-                    className="min-w-0 flex-1 bg-transparent px-3 py-1.5 font-mono text-xs text-ide-strong outline-none placeholder:text-ide-subtle"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowKey((v) => !v)}
-                    className="px-2 text-ide-subtle hover:text-ide-text"
-                    title={showKey ? 'Hide key' : 'Show key'}
-                    aria-label={showKey ? 'Hide API key' : 'Show API key'}
-                  >
-                    {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleSaveKey}
-                  className="ide-focus-ring rounded-ide-control bg-ide-focus px-3 py-1.5 text-xs font-semibold text-white hover:bg-ide-focus/90"
-                >
-                  Save Key
-                </button>
-                <button
-                  type="button"
-                  onClick={handleTestConnection}
-                  disabled={testState.status === 'testing'}
-                  className="ide-focus-ring rounded-ide-control border border-ide-border-strong bg-ide-card px-3 py-1.5 text-xs font-medium text-ide-text hover:bg-ide-hover disabled:opacity-50"
-                >
-                  {testState.status === 'testing' ? 'Working…' : 'Test Connection'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSyncLiveModels}
-                  disabled={testState.status === 'testing'}
-                  className="ide-focus-ring rounded-ide-control border border-ide-cyan/40 bg-ide-cyan/10 px-3 py-1.5 text-xs font-medium text-ide-cyan hover:bg-ide-cyan/20 disabled:opacity-50"
-                  title="Fetch live models supported by your API key"
-                >
-                  Sync Live Models
-                </button>
-              </div>
-
-              {testState.status !== 'idle' && (
-                <div
-                  className={`flex items-center gap-2 font-mono text-[11px] ${testState.status === 'ok'
-                    ? 'text-ide-emerald'
-                    : testState.status === 'error'
-                      ? 'text-ide-rose'
-                      : 'text-ide-muted'
-                    }`}
-                >
-                  {testState.status === 'error' && <AlertCircle className="h-3.5 w-3.5 shrink-0" />}
-                  {testState.status === 'ok' && <Check className="h-3.5 w-3.5 shrink-0" />}
-                  <span>{testState.message}</span>
-                </div>
-              )}
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-[12px] text-ide-muted">
+                Active: <span className="font-medium text-ide-strong">{activeModel.name}</span>
+              </span>
+              <Button variant="secondary" size="sm" onClick={() => setTab('providers')}>
+                Manage providers
+              </Button>
             </div>
           </div>
         ) : (
-          /* Add Custom Model / Provider Tab */
-          <form onSubmit={handleAddCustomModel} className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
-            <div className="space-y-1.5">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-ide-muted">Quick Provider Presets</div>
-              <div className="flex flex-wrap gap-1.5">
-                {PROVIDER_PRESETS.map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    onClick={() => {
-                      setCustomProvider(preset.provider);
-                      setCustomProviderKey(preset.providerKey);
-                      setCustomFormat(preset.apiFormat);
-                      setCustomBaseUrl(preset.baseUrl);
-                      setCustomModelId(preset.exampleModel);
-                      setCustomRequiresKey(preset.requiresApiKey);
-                      if (!customName) setCustomName(preset.exampleModel);
-                    }}
-                    className="ide-focus-ring rounded-ide-control border border-ide-border bg-ide-surface px-2.5 py-1 text-[11px] text-ide-text hover:bg-ide-hover"
-                  >
-                    {preset.label}
-                  </button>
-                ))}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Select
+                label="Provider"
+                value={selectedKeyProvider}
+                onChange={(e) => {
+                  setSelectedKeyProvider(e.target.value);
+                  setKeyDraft('');
+                  setTestState({ status: 'idle' });
+                }}
+                options={uniqueProviders.map((p) => ({
+                  value: p.providerKey,
+                  label: p.providerName,
+                }))}
+              />
+              <div className="flex flex-col justify-end pb-1">
+                <div className="flex items-center gap-2 text-[12px]">
+                  <span className="text-ide-muted">Status:</span>
+                  {testState.status === 'testing' ? (
+                    <Badge variant="accent">Testing…</Badge>
+                  ) : selectedProviderStatus === 'connected' ? (
+                    <Badge variant="success">Connected</Badge>
+                  ) : selectedProviderStatus === 'error' ? (
+                    <Badge variant="error">Connection failed</Badge>
+                  ) : selectedProviderMeta?.requiresApiKey === false ? (
+                    <Badge variant="neutral">Local endpoint</Badge>
+                  ) : selectedProviderConfigured ? (
+                    <Badge variant="neutral">Configured</Badge>
+                  ) : (
+                    <Badge variant="warning">Not configured</Badge>
+                  )}
+                </div>
               </div>
             </div>
 
-            {customError && (
-              <div className="flex items-center gap-2 rounded-ide-control border border-ide-rose/40 bg-ide-rose/10 px-3 py-2 text-xs text-ide-rose">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>{customError}</span>
+            {selectedProviderMeta?.requiresApiKey !== false && (
+              <div className="flex items-end gap-2">
+                <div className="min-w-0 flex-1">
+                  <Input
+                    label="API key (stored in local backend session)"
+                    type={showKey ? 'text' : 'password'}
+                    value={keyDraft}
+                    onChange={(e) => setKeyDraft(e.target.value)}
+                    placeholder={selectedProviderConfigured ? 'Saved (enter new key to replace)' : 'Enter API key…'}
+                    rightAdornment={
+                      <button
+                        type="button"
+                        onClick={() => setShowKey((v) => !v)}
+                        className="text-ide-subtle hover:text-ide-text"
+                        aria-label={showKey ? 'Hide API key' : 'Show API key'}
+                      >
+                        {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    }
+                  />
+                </div>
+                <Button variant="primary" onClick={handleSaveKey} disabled={!keyDraft.trim()}>
+                  Save key
+                </Button>
+                {selectedProviderConfigured && (
+                  <Button
+                    variant="ghost"
+                    onClick={async () => {
+                      await setApiKey(selectedKeyProvider, '');
+                      setTestState({ status: 'ok', message: 'API key removed.' });
+                    }}
+                  >
+                    Remove
+                  </Button>
+                )}
               </div>
             )}
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-[11px] font-medium text-ide-muted">Display Name</label>
-                <input
-                  type="text"
-                  value={customName}
-                  onChange={(e) => setCustomName(e.target.value)}
-                  placeholder="e.g. Gemini 2.5 Flash Exp / Groq Llama 3.3"
-                  className="ide-focus-ring w-full rounded-ide-control border border-ide-border-strong bg-ide-bg px-3 py-1.5 text-xs text-ide-strong outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-medium text-ide-muted">Provider Name</label>
-                <input
-                  type="text"
-                  value={customProvider}
-                  onChange={(e) => setCustomProvider(e.target.value)}
-                  placeholder="e.g. Google, Groq, OpenRouter, Ollama"
-                  className="ide-focus-ring w-full rounded-ide-control border border-ide-border-strong bg-ide-bg px-3 py-1.5 text-xs text-ide-strong outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-medium text-ide-muted">API Format *</label>
-                <select
-                  value={customFormat}
-                  onChange={(e) => setCustomFormat(e.target.value as AIProviderFormat)}
-                  className="ide-focus-ring w-full rounded-ide-control border border-ide-border-strong bg-ide-bg px-3 py-1.5 text-xs text-ide-strong outline-none"
-                >
-                  <option value="openai">OpenAI-Compatible (/v1/chat/completions)</option>
-                  <option value="gemini">Google Gemini (generateContent)</option>
-                  <option value="anthropic">Anthropic Messages (/v1/messages)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-medium text-ide-muted">Exact Model ID *</label>
-                <input
-                  type="text"
-                  required
-                  value={customModelId}
-                  onChange={(e) => setCustomModelId(e.target.value)}
-                  placeholder="e.g. gemini-2.5-flash, llama-3.3-70b-versatile"
-                  className="ide-focus-ring w-full rounded-ide-control border border-ide-border-strong bg-ide-bg px-3 py-1.5 font-mono text-xs text-ide-strong outline-none"
-                />
-              </div>
-
-              <div className="sm:col-span-2">
-                <label className="mb-1 block text-[11px] font-medium text-ide-muted">API Base URL</label>
-                <input
-                  type="text"
-                  value={customBaseUrl}
-                  onChange={(e) => setCustomBaseUrl(e.target.value)}
-                  placeholder="https://api.openai.com/v1"
-                  className="ide-focus-ring w-full rounded-ide-control border border-ide-border-strong bg-ide-bg px-3 py-1.5 font-mono text-xs text-ide-strong outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-medium text-ide-muted">Context Window</label>
-                <input
-                  type="text"
-                  value={customContextWindow}
-                  onChange={(e) => setCustomContextWindow(e.target.value)}
-                  placeholder="128k"
-                  className="ide-focus-ring w-full rounded-ide-control border border-ide-border-strong bg-ide-bg px-3 py-1.5 font-mono text-xs text-ide-strong outline-none"
-                />
-              </div>
-
-              <div className="flex items-end pb-1.5">
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-ide-text">
-                  <input
-                    type="checkbox"
-                    checked={customRequiresKey}
-                    onChange={(e) => setCustomRequiresKey(e.target.checked)}
-                    className="rounded border-ide-border bg-ide-bg text-ide-focus"
-                  />
-                  <span>Requires API Key (uncheck for local Ollama)</span>
-                </label>
-              </div>
-
-              {customRequiresKey && (
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-[11px] font-medium text-ide-muted">
-                    API Key (optional now — you can add or update it later)
-                  </label>
-                  <input
-                    type="password"
-                    value={customApiKey}
-                    onChange={(e) => setCustomApiKey(e.target.value)}
-                    placeholder="sk-... or AIza..."
-                    className="ide-focus-ring w-full rounded-ide-control border border-ide-border-strong bg-ide-bg px-3 py-1.5 font-mono text-xs text-ide-strong outline-none"
-                  />
-                </div>
-              )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={handleTestConnection} disabled={testState.status === 'testing'}>
+                Test connection
+              </Button>
+              <Button
+                variant="secondary"
+                leftIcon={<RefreshCw className="h-4 w-4" />}
+                onClick={handleSyncLiveModels}
+                disabled={testState.status === 'testing'}
+              >
+                Refresh models
+              </Button>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-ide-border pt-3">
+            {testState.message && (
+              <NotificationBanner
+                variant={testState.status === 'error' ? 'error' : testState.status === 'ok' ? 'success' : 'info'}
+                message={testState.message}
+              />
+            )}
+
+            <Divider />
+
+            {/* Progressive disclosure: Custom / OpenAI-compatible provider */}
+            <div className="rounded-ide-control border border-ide-border bg-ide-surface">
               <button
                 type="button"
-                onClick={() => setTab('models')}
-                className="ide-focus-ring rounded-ide-control border border-ide-border px-3 py-1.5 text-xs text-ide-muted hover:text-ide-text"
+                onClick={() => setShowCustomForm((v) => !v)}
+                className="ide-focus-ring flex w-full items-center justify-between px-3 py-2.5 text-[13px] font-medium text-ide-text hover:bg-ide-hover"
               >
-                Cancel
+                <span className="flex items-center gap-2">
+                  {showCustomForm ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  Add custom model or OpenAI-compatible endpoint
+                </span>
+                <Plus className="h-4 w-4 text-ide-subtle" aria-hidden="true" />
               </button>
-              <button
-                type="submit"
-                className="ide-focus-ring rounded-ide-control bg-ide-focus px-4 py-1.5 text-xs font-semibold text-white hover:bg-ide-focus/90"
-              >
-                Add & Select Model
-              </button>
-            </div>
-          </form>
-        )}
 
-        <footer className="flex items-center justify-between gap-3 border-t border-ide-border px-4 py-2.5 font-mono text-[10px] text-ide-subtle">
-          <span>API keys are stored strictly in your local backend session (never in browser localStorage).</span>
-          <button
-            type="button"
-            onClick={() => setIsModelSwitchingModalOpen(false)}
-            className="ide-focus-ring rounded-ide-control border border-ide-border-strong px-3 py-1 text-ide-text hover:bg-ide-hover"
-          >
-            Done
-          </button>
-        </footer>
-      </section>
-    </div>
+              {showCustomForm && (
+                <form onSubmit={handleAddCustomModel} className="border-t border-ide-border p-4 space-y-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {PROVIDER_PRESETS.map((p) => (
+                      <Button
+                        key={p.label}
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          setCustomProvider(p.provider);
+                          setCustomProviderKey(p.providerKey);
+                          setCustomFormat(p.apiFormat);
+                          setCustomBaseUrl(p.baseUrl);
+                          setCustomModelId(p.exampleModel);
+                          setCustomRequiresKey(p.requiresApiKey);
+                        }}
+                      >
+                        {p.label}
+                      </Button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Input
+                      label="Model ID"
+                      value={customModelId}
+                      onChange={(e) => setCustomModelId(e.target.value)}
+                      placeholder="gpt-4o or qwen2.5-coder:7b"
+                    />
+                    <Input
+                      label="Display name (optional)"
+                      value={customName}
+                      onChange={(e) => setCustomName(e.target.value)}
+                      placeholder="My Custom Model"
+                    />
+                    <Select
+                      label="API format"
+                      value={customFormat}
+                      onChange={(e) => setCustomFormat(e.target.value as AIProviderFormat)}
+                      options={[
+                        { value: 'openai', label: 'OpenAI-compatible' },
+                        { value: 'gemini', label: 'Google Gemini' },
+                        { value: 'anthropic', label: 'Anthropic Claude' },
+                      ]}
+                    />
+                    <Input
+                      label="Base URL"
+                      value={customBaseUrl}
+                      onChange={(e) => setCustomBaseUrl(e.target.value)}
+                      placeholder="https://api.openai.com/v1"
+                    />
+                  </div>
+
+                  <Checkbox
+                    label="Requires API key"
+                    checked={customRequiresKey}
+                    onChange={(e) => setCustomRequiresKey(e.target.checked)}
+                  />
+
+                  {customRequiresKey && (
+                    <Input
+                      label="API key (optional)"
+                      type="password"
+                      value={customApiKey}
+                      onChange={(e) => setCustomApiKey(e.target.value)}
+                      placeholder="sk-..."
+                    />
+                  )}
+
+                  {customError && <NotificationBanner variant="error" message={customError} />}
+
+                  <div className="flex justify-end">
+                    <Button type="submit" variant="primary">
+                      Add model
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </Dialog>
   );
 };

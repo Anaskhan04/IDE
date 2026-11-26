@@ -1,46 +1,32 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   Database,
   FolderSync,
   Github,
   Globe,
-  Key,
-  Lock,
   MessageSquare,
   Play,
   Plus,
   Server,
-  Terminal,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 import type { MCPServer, MCPTool } from '../../types/ide';
-
-const permissionClass: Record<MCPTool['permission'], string> = {
-  read: 'text-ide-focus',
-  write: 'text-ide-amber',
-  execute: 'text-ide-purple',
-};
+import { Badge, Button, Checkbox, EmptyState, NotificationBanner, Textarea } from '../ui';
 
 const getServerIcon = (name: string): LucideIcon => {
   switch (name) {
-    case 'Github': return Github;
-    case 'Database': return Database;
-    case 'Globe': return Globe;
-    case 'MessageSquare': return MessageSquare;
-    default: return FolderSync;
+    case 'Github':
+      return Github;
+    case 'Database':
+      return Database;
+    case 'Globe':
+      return Globe;
+    case 'MessageSquare':
+      return MessageSquare;
+    default:
+      return FolderSync;
   }
-};
-
-const serverState = (server: MCPServer) => {
-  if (server.status === 'connected') return { label: 'Connected', className: 'text-ide-emerald', marker: 'bg-ide-emerald' };
-  if (server.status === 'connecting') return { label: 'Connecting', className: 'text-ide-amber', marker: 'bg-ide-amber' };
-  if (server.status === 'error') return { label: 'Error', className: 'text-ide-rose', marker: 'bg-ide-rose' };
-  return { label: 'Offline', className: 'text-ide-subtle', marker: 'bg-ide-subtle' };
 };
 
 export const MCPDashboard: React.FC = () => {
@@ -50,16 +36,15 @@ export const MCPDashboard: React.FC = () => {
   const [toolArgsJson, setToolArgsJson] = useState('{}');
   const [executionOutput, setExecutionOutput] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
-  const [isVaultOpen, setIsVaultOpen] = useState(false);
   const [jsonError, setJsonError] = useState<string | null>(null);
 
   const selectedServer = useMemo(
     () => mcpServers.find((server) => server.id === selectedServerId) ?? mcpServers[0] ?? null,
-    [mcpServers, selectedServerId],
+    [mcpServers, selectedServerId]
   );
   const selectedTool = useMemo(
     () => selectedServer?.tools.find((tool) => tool.name === selectedToolName) ?? selectedServer?.tools[0] ?? null,
-    [selectedServer, selectedToolName],
+    [selectedServer, selectedToolName]
   );
 
   useEffect(() => {
@@ -80,7 +65,7 @@ export const MCPDashboard: React.FC = () => {
     setToolArgsJson(JSON.stringify(selectedTool?.sampleArgs || {}, null, 2));
     setExecutionOutput(null);
     setJsonError(null);
-  }, [selectedTool?.name]);
+  }, [selectedTool?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectTool = (tool: MCPTool) => {
     setSelectedToolName(tool.name);
@@ -97,210 +82,215 @@ export const MCPDashboard: React.FC = () => {
       JSON.parse(toolArgsJson);
       setJsonError(null);
     } catch {
-      setJsonError('Invalid JSON. Fix the call arguments before executing.');
+      setJsonError('Invalid JSON payload. Fix syntax before running preview.');
       return;
     }
 
     setIsExecuting(true);
     setExecutionOutput(null);
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    await new Promise((resolve) => setTimeout(resolve, 400));
 
-    let mockResponse: Record<string, unknown>;
-    if (selectedTool.name === 'create_or_update_pr' || selectedServer.id === 'mcp-github') {
-      mockResponse = {
-        jsonrpc: '2.0',
-        id: 'call_mcp_auth_err',
-        error: {
-          code: 401,
-          message: 'Authentication Required: GITHUB_PERSONAL_ACCESS_TOKEN is not configured.',
-          details: 'IntelliCode is operating in local repository mode on branch "anas-workspace-v1". Remote pull request creation and GitHub synchronization require a configured Personal Access Token.',
-          localBranch: 'anas-workspace-v1',
-          actionRequired: 'Configure GITHUB_PERSONAL_ACCESS_TOKEN in environment settings or .env file.',
-        },
-      };
-    } else if (selectedTool.name === 'run_e2e_checkout_flow') {
-      mockResponse = {
-        jsonrpc: '2.0',
-        id: 'call_mcp_9012',
-        result: {
-          status: 'PASSED',
-          stepsExecuted: 4,
-          url: 'http://localhost:3000/checkout',
-          trace: [
-            '1. Cart payload initialized ($49.00)',
-            '2. Triggered processPayment() via paymentService.ts',
-            '3. Gateway response received: AUTH_OK_889',
-            '4. Confirmation screen verified',
-          ],
-          duration: '1.82s',
-        },
-      };
-    } else if (selectedTool.name === 'introspect_schema') {
-      mockResponse = {
-        jsonrpc: '2.0',
-        id: 'call_mcp_9013',
-        result: {
-          schema: 'public',
-          tables: ['users', 'orders', 'payment_transactions', 'cart_items'],
-          constraints: ['orders.user_id -> users.id (CASCADE)', 'payment_transactions.order_id -> orders.id (RESTRICT)'],
-        },
-      };
-    } else {
-      mockResponse = {
-        jsonrpc: '2.0',
-        id: 'call_mcp_9014',
-        result: {
-          success: true,
-          tool: selectedTool.name,
-          server: selectedServer.name,
-          timestamp: new Date().toISOString(),
-          data: 'Local AST / in-memory operation completed successfully.',
-        },
-      };
-    }
+    const previewResponse = {
+      simulated: true,
+      note: 'Local simulated MCP tool response (no external MCP server process attached).',
+      tool: selectedTool.name,
+      server: selectedServer.name,
+      permission: selectedTool.permission,
+      timestamp: new Date().toISOString(),
+    };
 
-    setExecutionOutput(JSON.stringify(mockResponse, null, 2));
+    setExecutionOutput(JSON.stringify(previewResponse, null, 2));
     setIsExecuting(false);
   };
 
+  const statusBadge = (server: MCPServer) => {
+    if (server.status === 'connected') return <Badge variant="success">Preview active</Badge>;
+    if (server.status === 'connecting') return <Badge variant="warning">Connecting</Badge>;
+    if (server.status === 'error') return <Badge variant="error">Error</Badge>;
+    return <Badge variant="neutral">Not connected</Badge>;
+  };
+
   return (
-    <section id="mcp-workspace" className="flex h-full min-h-0 flex-col overflow-y-auto bg-ide-bg" data-purpose="mcp-workspace">
-      <div className="mx-auto w-full max-w-[1220px] px-5 py-6 lg:px-8">
-        <header className="flex flex-col gap-4 border-b border-ide-border pb-5 2xl:flex-row 2xl:items-end 2xl:justify-between">
+    <section
+      id="mcp-workspace"
+      className="flex h-full min-h-0 flex-col overflow-y-auto bg-ide-bg font-sans"
+      data-purpose="mcp-workspace"
+    >
+      <div className="mx-auto w-full max-w-[1220px] space-y-6 px-5 py-6 lg:px-8">
+        <header className="flex flex-col gap-4 border-b border-ide-border pb-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <Server className="h-4 w-4 text-ide-cyan" aria-hidden="true" />
-              <h1 className="text-base font-semibold text-ide-strong">MCP hub</h1>
+              <Server className="h-5 w-5 text-ide-cyan" aria-hidden="true" />
+              <h1 className="text-[20px] font-semibold text-ide-strong">MCP Hub</h1>
+              <Badge variant="warning">Experimental</Badge>
             </div>
-            <p className="mt-2 max-w-2xl text-xs leading-relaxed text-ide-muted">Inspect connected servers, tool permissions, and the exact call response.</p>
+            <p className="mt-1 max-w-2xl text-[13px] text-ide-muted">
+              Inspect configured MCP server definitions, tool permissions, and simulated JSON-RPC test payloads.
+            </p>
           </div>
-          <button type="button" disabled className="ide-focus-ring inline-flex min-h-[32px] cursor-not-allowed items-center gap-2 border border-ide-border-strong px-3 text-xs text-ide-subtle" title="Connecting new MCP servers is not available in this build">
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            Connect MCP server unavailable
-          </button>
+          <Button
+            variant="secondary"
+            disabled
+            leftIcon={<Plus className="h-4 w-4" />}
+            title="Live external MCP server registration is not enabled in this local build"
+          >
+            Add server (unavailable)
+          </Button>
         </header>
 
-        <div className="mt-5 border border-ide-border bg-ide-panel">
-          <button type="button" onClick={() => setIsVaultOpen((open) => !open)} className="ide-focus-ring flex min-h-[38px] w-full items-center gap-2 px-3 text-left hover:bg-ide-hover">
-            {isVaultOpen ? <ChevronDown className="h-3.5 w-3.5 text-ide-amber" /> : <ChevronRight className="h-3.5 w-3.5 text-ide-amber" />}
-            <Key className="h-3.5 w-3.5 text-ide-amber" aria-hidden="true" />
-            <span className="text-xs font-semibold text-ide-text">Centralized credentials &amp; API key vault</span>
-            <span className="ml-auto font-mono text-[10px] text-ide-subtle">Configured once, inherited by tools</span>
-          </button>
-          {isVaultOpen && (
-            <div className="grid border-t border-ide-border sm:grid-cols-3">
-              {[
-                ['GITHUB_PERSONAL_ACCESS_TOKEN', 'Unconfigured (Requires token for remote sync)'],
-                ['POSTGRES_CONNECTION_URI', 'Unconfigured (Local mock sandbox active)'],
-                ['STRIPE_SECRET_KEY', 'Unconfigured (Offline test environment)'],
-              ].map(([name, desc]) => (
-                <div key={name} className="flex items-center justify-between gap-3 border-b border-ide-border p-3 font-mono text-[10px] sm:border-b-0 sm:border-r last:border-r-0">
-                  <div className="min-w-0">
-                    <span className="block truncate text-ide-subtle">{name}</span>
-                    <span className="mt-1 block truncate text-ide-amber">{desc}</span>
-                  </div>
-                  <span className="rounded bg-ide-amber/15 px-1.5 py-0.5 text-[9px] font-semibold text-ide-amber shrink-0">
-                    Unset
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <NotificationBanner
+          variant="info"
+          title="Simulated MCP environment"
+          message="Tool execution in MCP Hub runs against local mock fixtures. Use the Integrated Terminal or GitHub integration for live repository operations."
+        />
 
-        {!selectedServer ? (
-          <div className="mt-5 border-l-2 border-ide-border-strong bg-ide-panel px-4 py-4">
-            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-ide-subtle">No MCP servers</div>
-            <p className="mt-2 text-sm text-ide-text">Connect a server to inspect its tools.</p>
-          </div>
+        {mcpServers.length === 0 || !selectedServer ? (
+          <EmptyState
+            icon={<Server className="h-5 w-5" />}
+            title="No MCP servers configured"
+            description="No server definitions are registered in this workspace."
+          />
         ) : (
-          <div className="mt-5 grid gap-5 2xl:grid-cols-[minmax(260px,0.8fr)_minmax(0,1.8fr)]">
-            <section aria-labelledby="server-register-heading" className="border border-ide-border bg-ide-panel">
-              <div className="flex min-h-[40px] items-center justify-between border-b border-ide-border px-3">
-                <h2 id="server-register-heading" className="text-xs font-semibold text-ide-text">Server register</h2>
-                <span className="font-mono text-[10px] text-ide-subtle">{mcpServers.length} servers</span>
-              </div>
-              <div>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+            {/* Servers List */}
+            <div className="space-y-2 lg:col-span-4">
+              <h2 className="text-[12px] font-semibold text-ide-muted">Configured servers</h2>
+              <div className="space-y-2">
                 {mcpServers.map((server) => {
                   const Icon = getServerIcon(server.icon);
                   const isSelected = server.id === selectedServer.id;
-                  const status = serverState(server);
                   return (
-                    <div key={server.id} className={`flex border-b border-ide-border ${isSelected ? 'border-l-2 border-l-ide-cyan bg-ide-selected' : 'border-l-2 border-l-transparent hover:bg-ide-hover/60'}`}>
-                      <button type="button" onClick={() => { setSelectedServerId(server.id); setSelectedToolName(server.tools[0]?.name ?? null); }} className="ide-focus-ring min-w-0 flex-1 px-3 py-3 text-left" aria-selected={isSelected}>
-                        <div className="flex items-start gap-2">
-                          <Icon className="mt-0.5 h-4 w-4 shrink-0 text-ide-cyan" aria-hidden="true" />
-                          <span className="min-w-0">
-                            <span className="block truncate font-mono text-xs text-ide-text">{server.name}</span>
-                            <span className="mt-1 block font-mono text-[10px] text-ide-subtle">{server.transport} · {server.tools.length} tools</span>
-                          </span>
+                    <div
+                      key={server.id}
+                      className={`rounded-ide-panel border p-3.5 transition-colors ${
+                        isSelected
+                          ? 'border-ide-focus bg-ide-selected'
+                          : 'border-ide-border bg-ide-panel hover:bg-ide-hover'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setSelectedServerId(server.id)}
+                        className="ide-focus-ring flex w-full items-start justify-between gap-2 text-left"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Icon className="h-4 w-4 shrink-0 text-ide-cyan" aria-hidden="true" />
+                          <span className="truncate text-[13px] font-semibold text-ide-strong">{server.name}</span>
                         </div>
-                        <span className={`mt-2 flex items-center gap-1.5 font-mono text-[10px] ${status.className}`}><span className={`h-1.5 w-1.5 ${status.marker}`} aria-hidden="true" />{status.label}</span>
+                        {statusBadge(server)}
                       </button>
-                      <button type="button" onClick={() => toggleMcpServer(server.id)} className="ide-focus-ring self-start px-3 py-3 text-[10px] text-ide-subtle hover:text-ide-text" aria-label={`${server.status === 'connected' ? 'Disconnect' : 'Connect'} ${server.name}`}>
-                        {server.status === 'connected' ? 'On' : 'Off'}
-                      </button>
+                      <p className="mt-1.5 text-[12px] text-ide-muted">{server.description}</p>
+                      <div className="mt-3 flex items-center justify-between border-t border-ide-border pt-2.5 text-[12px]">
+                        <span className="text-ide-subtle">{server.tools.length} tools</span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => toggleMcpServer(server.id)}
+                        >
+                          {server.status === 'connected' ? 'Disable' : 'Enable preview'}
+                        </Button>
+                      </div>
                     </div>
                   );
                 })}
               </div>
-            </section>
+            </div>
 
-            <div className="min-w-0 space-y-5">
-              <section aria-labelledby="tool-manifest-heading" className="border border-ide-border bg-ide-panel">
-                <div className="flex min-h-[40px] items-center justify-between border-b border-ide-border px-3">
-                  <h2 id="tool-manifest-heading" className="text-xs font-semibold text-ide-text">Tool manifest <span className="font-mono text-ide-subtle">/ {selectedServer.name}</span></h2>
-                  <span className="font-mono text-[10px] text-ide-subtle">Permission · state</span>
+            {/* Selected Server Tools & Inspector */}
+            <div className="space-y-4 lg:col-span-8">
+              <div className="rounded-ide-panel border border-ide-border bg-ide-panel p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-ide-border pb-3">
+                  <div>
+                    <h2 className="text-[14px] font-semibold text-ide-strong">{selectedServer.name} tools</h2>
+                    <p className="text-[12px] text-ide-muted">Enable or inspect tool permissions and arguments.</p>
+                  </div>
+                  {statusBadge(selectedServer)}
                 </div>
-                <div className="hidden grid-cols-[minmax(150px,0.8fr)_minmax(180px,1.5fr)_80px_72px] gap-3 border-b border-ide-border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.08em] text-ide-subtle md:grid">
-                  <span>Tool</span><span>Description</span><span>Permission</span><span>State</span>
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {selectedServer.tools.map((tool) => {
+                    const active = selectedTool?.name === tool.name;
+                    return (
+                      <div
+                        key={tool.name}
+                        className={`flex items-start justify-between gap-2 rounded-ide-control border p-3 ${
+                          active
+                            ? 'border-ide-focus bg-ide-selected'
+                            : 'border-ide-border bg-ide-bg hover:bg-ide-hover'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleSelectTool(tool)}
+                          className="ide-focus-ring min-w-0 flex-1 text-left"
+                        >
+                          <div className="truncate font-mono text-[12px] font-semibold text-ide-strong">
+                            {tool.name}
+                          </div>
+                          <div className="mt-0.5 line-clamp-2 text-[12px] text-ide-muted">
+                            {tool.description}
+                          </div>
+                        </button>
+                        <div className="flex shrink-0 flex-col items-end gap-2">
+                          <Badge
+                            variant={
+                              tool.permission === 'write'
+                                ? 'warning'
+                                : tool.permission === 'execute'
+                                  ? 'intelligence'
+                                  : 'accent'
+                            }
+                          >
+                            {tool.permission}
+                          </Badge>
+                          <Checkbox
+                            label=""
+                            aria-label={`Enable ${tool.name}`}
+                            checked={tool.enabled}
+                            onChange={() => toggleMcpTool(selectedServer.id, tool.name)}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                {selectedServer.tools.length === 0 ? (
-                  <div className="px-3 py-4 font-mono text-[10px] text-ide-subtle">No tools exposed by this server.</div>
-                ) : selectedServer.tools.map((tool) => {
-                  const isSelected = selectedTool?.name === tool.name;
-                  return (
-                    <div key={tool.name} className={`grid items-start gap-3 border-b border-ide-border px-3 py-3 md:grid-cols-[minmax(150px,0.8fr)_minmax(180px,1.5fr)_80px_72px] ${isSelected ? 'bg-ide-selected/60' : 'hover:bg-ide-hover/60'}`}>
-                      <button type="button" onClick={() => handleSelectTool(tool)} className="ide-focus-ring min-w-0 text-left font-mono text-xs text-ide-text" aria-selected={isSelected}>{tool.name}</button>
-                      <button type="button" onClick={() => handleSelectTool(tool)} className="ide-focus-ring text-left text-[11px] leading-relaxed text-ide-muted">{tool.description}</button>
-                      <span className={`font-mono text-[10px] uppercase ${permissionClass[tool.permission]}`}>{tool.permission}</span>
-                      <button type="button" onClick={() => toggleMcpTool(selectedServer.id, tool.name)} className={`ide-focus-ring font-mono text-[10px] ${tool.enabled ? 'text-ide-emerald' : 'text-ide-subtle'}`} aria-pressed={tool.enabled} aria-label={`${tool.name} ${tool.enabled ? 'enabled' : 'disabled'}`}>
-                        {tool.enabled ? 'Enabled' : 'Disabled'}
-                      </button>
+              </div>
+
+              {selectedTool && (
+                <div className="rounded-ide-panel border border-ide-border bg-ide-panel p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="font-mono text-[13px] font-semibold text-ide-strong">{selectedTool.name}</h3>
+                      <p className="text-[12px] text-ide-muted">{selectedTool.description}</p>
                     </div>
-                  );
-                })}
-              </section>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      leftIcon={<Play className="h-3.5 w-3.5" />}
+                      loading={isExecuting}
+                      disabled={selectedServer.status !== 'connected' || !selectedTool.enabled}
+                      onClick={handleExecuteTool}
+                    >
+                      Run simulated call
+                    </Button>
+                  </div>
 
-              <section aria-labelledby="invocation-bench-heading" className="border border-ide-border bg-ide-panel">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ide-border px-3 py-3">
-                  <h2 id="invocation-bench-heading" className="flex items-center gap-2 text-xs font-semibold text-ide-text"><Terminal className="h-3.5 w-3.5 text-ide-cyan" aria-hidden="true" />Invocation bench <span className="font-mono text-ide-cyan">{selectedTool?.name || 'No tool selected'}</span></h2>
-                  <span className="font-mono text-[10px] text-ide-subtle">JSON-RPC 2.0</span>
+                  <Textarea
+                    label="Arguments (JSON)"
+                    rows={5}
+                    value={toolArgsJson}
+                    onChange={(e) => setToolArgsJson(e.target.value)}
+                    error={jsonError || undefined}
+                    className="font-mono text-[12px]"
+                  />
+
+                  {executionOutput && (
+                    <pre className="max-h-52 overflow-auto rounded-ide-control border border-ide-border bg-ide-code p-3 font-mono text-[12px] text-ide-text select-text">
+                      {executionOutput}
+                    </pre>
+                  )}
                 </div>
-                <div className="grid gap-4 p-3 lg:grid-cols-2">
-                  <div>
-                    <label htmlFor="mcp-call-args" className="mb-1.5 block font-mono text-[10px] text-ide-muted">Call arguments (JSON)</label>
-                    <textarea id="mcp-call-args" rows={8} value={toolArgsJson} onChange={(event) => { setToolArgsJson(event.target.value); setJsonError(null); }} className={`ide-focus-ring w-full resize-y border bg-ide-code p-3 font-mono text-[11px] text-ide-text outline-none ${jsonError ? 'border-ide-rose' : 'border-ide-border-strong focus:border-ide-focus'}`} aria-describedby={jsonError ? 'mcp-json-error' : undefined} />
-                    {jsonError && <div id="mcp-json-error" className="mt-2 flex items-start gap-1.5 font-mono text-[10px] text-ide-rose"><AlertCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />{jsonError}</div>}
-                  </div>
-                  <div>
-                    <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] text-ide-muted"><span>Response</span>{executionOutput && <span className="text-ide-emerald">Success · 124ms</span>}</div>
-                    {executionOutput ? <pre className="max-h-56 overflow-auto border border-ide-border-strong bg-ide-code p-3 font-mono text-[11px] leading-relaxed text-ide-emerald">{executionOutput}</pre> : <div className="flex min-h-[174px] items-center justify-center border border-dashed border-ide-border-strong bg-ide-code px-4 text-center font-mono text-[10px] text-ide-subtle">Tool response will appear here after execution.</div>}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-3 border-t border-ide-border px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-2 font-mono text-[10px] text-ide-muted">
-                    <Lock className="h-3 w-3 text-ide-amber" aria-hidden="true" />
-                    Permissions: <span className={selectedTool ? permissionClass[selectedTool.permission] : 'text-ide-subtle'}>{selectedTool?.permission.toUpperCase() || 'NONE'}</span>
-                    {selectedServer.status !== 'connected' && <span className="text-ide-rose">· Server offline</span>}
-                    {selectedTool && !selectedTool.enabled && <span className="text-ide-rose">· Tool disabled</span>}
-                  </div>
-                  <button type="button" onClick={handleExecuteTool} disabled={isExecuting || !selectedTool || !selectedTool.enabled || selectedServer.status !== 'connected'} className="ide-focus-ring inline-flex min-h-[32px] items-center justify-center gap-2 bg-ide-focus px-3 text-xs font-semibold text-white hover:bg-ide-focus/85 disabled:cursor-not-allowed disabled:bg-ide-border disabled:text-ide-subtle">
-                    <Play className="h-3.5 w-3.5" aria-hidden="true" />
-                    {isExecuting ? 'Calling server' : 'Execute tool call'}
-                  </button>
-                </div>
-              </section>
+              )}
             </div>
           </div>
         )}

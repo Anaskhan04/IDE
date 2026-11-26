@@ -26,3 +26,13 @@ scratch/
 *.njsproj
 *.sln
 *.sw?
+
+# Generated test artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Local environment secrets
+.env
+.env.*
+!.env.example

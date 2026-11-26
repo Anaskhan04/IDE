@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ArrowLeft,
+  ArrowRight,
   CheckCircle2,
-  ChevronDown,
   Code2,
-  Command,
   Cpu,
   FolderGit2,
   Github,
@@ -11,28 +11,29 @@ import {
   KeyRound,
   LogOut,
   Search,
-  Settings,
   Sparkles,
   UploadCloud,
   X,
 } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 import { GlobalSearchModal } from '../search/GlobalSearchModal';
+import { Button, IconButton } from '../ui';
+
+const isMacOS =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || '');
 
 export const TopNav: React.FC = () => {
   const {
     activeModel,
-    configuredProviders,
     masterPrompt,
     isCopilotOpen,
     setIsCopilotOpen,
     setIsModelSwitchingModalOpen,
     isCommandPaletteOpen,
     setIsCommandPaletteOpen,
-    setSidebarView,
-    setIsSidebarVisible,
     toggleProblemsPanel,
     toggleTerminal,
+    setIsSettingsOpen,
     githubUser,
     setIsGitHubModalOpen,
     gitBranch,
@@ -40,6 +41,10 @@ export const TopNav: React.FC = () => {
     pushToGitHub,
     logoutGitHub,
     gitLoading,
+    canGoBack,
+    canGoForward,
+    goBack,
+    goForward,
   } = useIDE();
 
   const [searchInitialQuery, setSearchInitialQuery] = useState('');
@@ -65,176 +70,157 @@ export const TopNav: React.FC = () => {
     };
   }, [isProfileOpen]);
 
-  // Global keyboard shortcuts for Search / Quick Open / Command Palette
+  // Global keyboard shortcuts for Search / Quick Open / Command Palette / Panels
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Ctrl+` -> Toggle Integrated Terminal
+      if ((event.ctrlKey || event.metaKey) && event.key === ',') {
+        event.preventDefault();
+        setIsSettingsOpen(true);
+        return;
+      }
+
+      if (event.altKey && !event.ctrlKey && !event.metaKey && event.key === 'ArrowLeft') {
+        if (canGoBack) {
+          event.preventDefault();
+          goBack();
+        }
+        return;
+      }
+
+      if (event.altKey && !event.ctrlKey && !event.metaKey && event.key === 'ArrowRight') {
+        if (canGoForward) {
+          event.preventDefault();
+          goForward();
+        }
+        return;
+      }
+
       if ((event.ctrlKey || event.metaKey) && event.key === '`') {
         event.preventDefault();
         toggleTerminal();
         return;
       }
 
-      // Ctrl+Shift+M -> Toggle Problems Panel
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'm') {
         event.preventDefault();
         toggleProblemsPanel();
         return;
       }
 
-      // Ctrl+Shift+P or F1 -> Command Palette
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'p') {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        setSearchMode('commands');
-        setSearchInitialQuery('>');
-        setIsCommandPaletteOpen(true);
-      } else if (event.key === 'F1') {
-        event.preventDefault();
-        setSearchMode('commands');
-        setSearchInitialQuery('>');
+        setSearchInitialQuery('');
+        setSearchMode('all');
         setIsCommandPaletteOpen(true);
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
-        // Ctrl+P -> Quick File Open
         event.preventDefault();
-        setSearchMode('files');
         setSearchInitialQuery('');
+        setSearchMode(event.shiftKey ? 'commands' : 'files');
         setIsCommandPaletteOpen(true);
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        // Ctrl+K -> Global Search
+      } else if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'o') {
         event.preventDefault();
-        setSearchMode('all');
         setSearchInitialQuery('');
+        setSearchMode('symbols');
         setIsCommandPaletteOpen(true);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setIsCommandPaletteOpen, toggleProblemsPanel, toggleTerminal]);
+  }, [setIsCommandPaletteOpen, setIsSettingsOpen, toggleProblemsPanel, toggleTerminal, canGoBack, canGoForward, goBack, goForward]);
 
-  const handleOpenSearch = (mode: 'all' | 'files' | 'symbols' | 'commands' = 'all', query = '') => {
+  const handleOpenSearch = (mode: 'all' | 'files' | 'symbols' | 'commands' = 'all') => {
+    setSearchInitialQuery('');
     setSearchMode(mode);
-    setSearchInitialQuery(query);
     setIsCommandPaletteOpen(true);
   };
+
+  const shortcutLabel = isMacOS ? '⌘K' : 'Ctrl+K';
 
   return (
     <>
       <header
-        className="flex h-12 shrink-0 items-center gap-4 border-b border-ide-border bg-ide-shell px-3 select-none"
+        className="flex h-11 shrink-0 items-center justify-between gap-4 border-b border-ide-border bg-ide-shell px-3 select-none"
         data-purpose="top-navigation"
       >
-        {/* Logo and Project Name */}
-        <div className="flex w-[175px] shrink-0 items-center gap-2.5 lg:w-[230px]">
+        {/* Project Identity */}
+        <div className="flex min-w-0 items-center gap-2.5">
           <div
-            className="flex h-7 w-7 shrink-0 items-center justify-center border border-ide-focus/70 bg-ide-selected text-ide-focus"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-ide-control border border-ide-borderStrong bg-ide-surface text-ide-focus"
             aria-hidden="true"
           >
             <Code2 className="h-4 w-4" strokeWidth={1.8} />
           </div>
-          <div className="min-w-0">
-            <div className="flex items-baseline gap-2 leading-none">
-              <span className="font-semibold tracking-[0.01em] text-ide-strong">IntelliCode</span>
-              <span className="font-mono text-[10px] text-ide-subtle">v0.24</span>
-            </div>
-            <span className="mt-1 block truncate font-mono text-[10px] text-ide-muted" title={masterPrompt.projectName || 'workspace'}>
-              {masterPrompt.projectName || 'workspace'}
-            </span>
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="font-sans text-[13px] font-semibold text-ide-strong">IntelliCode</span>
+            {masterPrompt.projectName && (
+              <span
+                className="hidden truncate font-sans text-[12px] text-ide-muted sm:inline"
+                title={masterPrompt.projectName}
+              >
+                / {masterPrompt.projectName}
+              </span>
+            )}
+          </div>
+          <div className="ml-1 flex items-center gap-0.5" role="group" aria-label="Workspace navigation history">
+            <IconButton
+              label="Go Back (Alt+Left)"
+              size="sm"
+              disabled={!canGoBack}
+              onClick={goBack}
+              data-testid="nav-back-button"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+            </IconButton>
+            <IconButton
+              label="Go Forward (Alt+Right)"
+              size="sm"
+              disabled={!canGoForward}
+              onClick={goForward}
+              data-testid="nav-forward-button"
+            >
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </IconButton>
           </div>
         </div>
 
-        {/* Global Search Bar (Fully Interactive!) */}
-        <div className="min-w-0 flex-1">
-          <label className="sr-only" htmlFor="global-command-search">
-            Search files, symbols, commands
-          </label>
-          <div
+        {/* Global Search */}
+        <div className="flex min-w-0 flex-1 justify-center">
+          <button
+            type="button"
             onClick={() => handleOpenSearch('all')}
-            className="group mx-auto flex max-w-[680px] cursor-pointer items-center gap-2 border-b border-ide-border-strong/70 px-1.5 text-ide-muted transition-colors hover:border-ide-focus"
+            aria-label={`Search files, symbols, and commands (${shortcutLabel})`}
+            className="ide-focus-ring flex h-8 w-full max-w-[460px] items-center gap-2 rounded-ide-control border border-ide-borderStrong bg-ide-bg px-3 text-left font-sans text-[12px] text-ide-muted transition-colors duration-150 hover:border-ide-muted hover:text-ide-text"
           >
-            <Search className="h-3.5 w-3.5 shrink-0 text-ide-subtle group-hover:text-ide-focus" aria-hidden="true" />
-            <input
-              id="global-command-search"
-              readOnly
-              onClick={() => handleOpenSearch('all')}
-              className="min-w-0 flex-1 cursor-pointer bg-transparent py-1.5 text-xs text-ide-text outline-none placeholder:text-ide-subtle"
-              placeholder="Search files, symbols, commands (Ctrl+K or Ctrl+P)…"
-            />
-            <kbd className="flex items-center gap-1 border border-ide-border-strong px-1.5 py-0.5 font-mono text-[10px] text-ide-muted">
-              <Command className="h-2.5 w-2.5" aria-hidden="true" />K
+            <Search className="h-4 w-4 shrink-0 text-ide-subtle" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">Search files, symbols, commands…</span>
+            <kbd className="shrink-0 rounded-ide-small border border-ide-border bg-ide-surface px-1.5 py-0.5 font-mono text-[11px] text-ide-subtle">
+              {shortcutLabel}
             </kbd>
-          </div>
+          </button>
         </div>
 
-        {/* Top Right Controls */}
-        <div className="relative flex shrink-0 items-center gap-2 border-l border-ide-border pl-3 text-[11px]">
-          {/* AST sync indicator */}
-          <div
-            className="hidden items-center gap-1.5 pr-2 text-ide-emerald xl:flex cursor-pointer hover:text-ide-strong transition-colors"
-            title={`AST Engine Synced - Click to search symbols`}
-            onClick={() => handleOpenSearch('symbols')}
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-ide-emerald" aria-hidden="true" />
-            <span>AST synced</span>
-          </div>
-
-          {/* AI Model Switcher */}
-          <button
-            type="button"
-            onClick={() => setIsModelSwitchingModalOpen(true)}
-            className="ide-focus-ring ide-control flex min-h-[30px] items-center gap-1.5 border-l border-ide-border px-2 text-ide-text hover:bg-ide-hover hover:text-ide-strong"
-            title="Choose AI model, configure API keys, or add custom provider"
-          >
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                activeModel.requiresApiKey === false || configuredProviders[activeModel.providerKey]
-                  ? 'bg-ide-emerald'
-                  : 'bg-ide-amber'
-              }`}
-              aria-hidden="true"
-            />
-            <span className="font-mono text-[10px] text-ide-cyan">MODEL</span>
-            <span className="max-w-[130px] truncate font-medium">{activeModel.name}</span>
-            <ChevronDown className="h-3 w-3 text-ide-subtle" aria-hidden="true" />
-          </button>
-
-          {/* AI Assistant / Context Inspector */}
-          <button
-            type="button"
+        {/* Right Actions: Assistant & Accounts */}
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            variant={isCopilotOpen ? 'primary' : 'secondary'}
+            leftIcon={<Sparkles className="h-4 w-4" />}
             onClick={() => setIsCopilotOpen(!isCopilotOpen)}
-            className={`ide-focus-ring ide-control flex min-h-[30px] items-center gap-1.5 border-l border-ide-border px-2 ${
-              isCopilotOpen ? 'text-ide-cyan bg-ide-hover/50' : 'text-ide-muted hover:bg-ide-hover hover:text-ide-text'
-            }`}
             aria-pressed={isCopilotOpen}
             title={isCopilotOpen ? 'Close AI Assistant' : 'Open AI Assistant'}
           >
-            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-            <span className="hidden lg:inline">AI Chat</span>
-          </button>
+            <span className="hidden sm:inline">Assistant</span>
+          </Button>
 
-          {/* Settings Button (Active and working!) */}
-          <button
-            type="button"
-            onClick={() => {
-              setSidebarView('settings');
-              setIsSidebarVisible(true);
-            }}
-            className="ide-focus-ring ide-control flex min-h-[30px] items-center border-l border-ide-border px-2 text-ide-muted hover:bg-ide-hover hover:text-ide-text"
-            title="Open Editor Settings (Ctrl+,)"
-            aria-label="Settings"
-          >
-            <Settings className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-
-          {/* Accounts & Connected Services Popover */}
           <div ref={profilePopoverRef} className="relative">
             <button
               type="button"
               onClick={() => setIsProfileOpen(!isProfileOpen)}
-              className={`ide-focus-ring flex h-7 items-center gap-1.5 rounded-ide-control border px-2 font-mono text-[10px] font-semibold transition-colors ${
+              className={`ide-focus-ring flex h-7 items-center gap-1.5 rounded-ide-control border px-2.5 font-sans text-[12px] font-medium transition-colors duration-150 ${
                 githubUser
-                  ? 'border-ide-emerald/40 bg-ide-panel text-ide-strong hover:border-ide-emerald'
-                  : 'border-ide-border bg-ide-panel text-ide-text hover:border-ide-focus hover:text-ide-focus'
+                  ? 'border-ide-emerald/40 bg-ide-surface text-ide-strong hover:bg-ide-hover'
+                  : 'border-ide-borderStrong bg-ide-surface text-ide-text hover:bg-ide-hover'
               }`}
               title={githubUser ? `Accounts · GitHub @${githubUser.login}` : 'Accounts & Connected Services'}
               aria-label="Accounts and connected services"
@@ -243,83 +229,78 @@ export const TopNav: React.FC = () => {
               {githubUser?.avatarUrl ? (
                 <img src={githubUser.avatarUrl} alt={githubUser.login} className="h-4 w-4 rounded-full" />
               ) : (
-                <Github className="h-3.5 w-3.5" aria-hidden="true" />
+                <Github className="h-4 w-4 text-ide-muted" aria-hidden="true" />
               )}
               <span className="hidden sm:inline">{githubUser ? `@${githubUser.login}` : 'Accounts'}</span>
             </button>
 
             {isProfileOpen && (
               <div
-                className="absolute right-0 top-9 z-50 w-80 rounded-ide-panel border border-ide-border-strong bg-ide-panel p-3.5 shadow-xl font-sans"
+                className="absolute right-0 top-9 z-50 w-80 rounded-ide-menu border border-ide-borderStrong bg-ide-panel p-4 shadow-lg font-sans"
                 role="dialog"
                 aria-label="Accounts and connected services"
               >
-                <div className="flex items-center justify-between border-b border-ide-border pb-2.5">
+                <div className="flex items-center justify-between border-b border-ide-border pb-3">
                   <div>
-                    <div className="text-xs font-semibold text-ide-strong">Accounts &amp; Services</div>
-                    <div className="text-[10px] text-ide-muted">
-                      Local workspace works offline. Connect external services as needed.
+                    <div className="text-[13px] font-semibold text-ide-strong">Accounts &amp; Services</div>
+                    <div className="text-[12px] text-ide-muted">
+                      Local workspace works offline.
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsProfileOpen(false)}
-                    className="ide-focus-ring rounded-ide-control p-1 text-ide-subtle hover:bg-ide-hover hover:text-ide-text"
-                    aria-label="Close accounts menu"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                  <IconButton size="sm" label="Close accounts menu" onClick={() => setIsProfileOpen(false)}>
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </IconButton>
                 </div>
 
-                <div className="mt-3 space-y-2.5 text-[11px]">
+                <div className="mt-3 space-y-3 text-[12px]">
                   {/* Local Workspace Status */}
-                  <div className="rounded-ide-control border border-ide-border bg-ide-surface px-3 py-2">
+                  <div className="rounded-ide-control border border-ide-border bg-ide-bg px-3 py-2">
                     <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-1.5 font-semibold text-ide-strong">
-                        <HardDrive className="h-3.5 w-3.5 text-ide-cyan" aria-hidden="true" />
+                      <span className="flex items-center gap-1.5 font-medium text-ide-strong">
+                        <HardDrive className="h-4 w-4 text-ide-cyan" aria-hidden="true" />
                         Local Workspace
                       </span>
-                      <span className="rounded-ide-control bg-ide-emerald/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-ide-emerald">
+                      <span className="rounded-ide-small bg-ide-emerald/15 px-1.5 py-0.5 text-[11px] font-medium text-ide-emerald">
                         Active
                       </span>
                     </div>
-                    <div className="mt-1 flex items-center justify-between text-[10px] text-ide-muted">
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-ide-muted">
                       <span className="truncate">{masterPrompt.projectName || 'workspace'}</span>
-                      <span className="font-mono text-ide-text">{isGitRepo ? gitBranch || 'HEAD' : 'Local Git off'}</span>
+                      <span className="font-mono text-ide-text">{isGitRepo ? gitBranch || 'HEAD' : 'No Git'}</span>
                     </div>
                   </div>
 
-                  {/* GitHub Connection Status */}
-                  <div className="rounded-ide-control border border-ide-border bg-ide-surface p-3 space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 min-w-0">
+                  {/* GitHub Connection */}
+                  <div className="rounded-ide-control border border-ide-border bg-ide-bg p-3 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-2">
                         {githubUser?.avatarUrl ? (
                           <img
                             src={githubUser.avatarUrl}
                             alt={githubUser.login}
-                            className="h-7 w-7 shrink-0 rounded-full border border-ide-border-strong"
+                            className="h-7 w-7 shrink-0 rounded-full border border-ide-borderStrong"
                           />
                         ) : (
-                          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ide-border bg-ide-bg text-ide-strong">
-                            <Github className="h-3.5 w-3.5" aria-hidden="true" />
+                          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ide-border bg-ide-surface text-ide-strong">
+                            <Github className="h-4 w-4" aria-hidden="true" />
                           </div>
                         )}
                         <div className="min-w-0">
-                          <div className="truncate font-semibold text-ide-strong">
+                          <div className="truncate font-medium text-ide-strong">
                             {githubUser ? githubUser.name : 'GitHub'}
                           </div>
-                          <div className="truncate font-mono text-[10px] text-ide-muted">
+                          <div className="truncate text-[11px] text-ide-muted">
                             {githubUser ? `@${githubUser.login}` : 'Not connected'}
                           </div>
                         </div>
                       </div>
                       {githubUser ? (
-                        <span className="inline-flex items-center gap-1 rounded-ide-control bg-ide-emerald/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-ide-emerald">
-                          <CheckCircle2 className="h-2.5 w-2.5" aria-hidden="true" />
+                        <span className="inline-flex items-center gap-1 rounded-ide-small bg-ide-emerald/15 px-1.5 py-0.5 text-[11px] font-medium text-ide-emerald">
+                          <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
                           Connected
                         </span>
                       ) : (
-                        <span className="rounded-ide-control bg-ide-bg px-1.5 py-0.5 font-mono text-[9px] text-ide-subtle border border-ide-border">
+                        <span className="rounded-ide-small border border-ide-border bg-ide-surface px-1.5 py-0.5 text-[11px] text-ide-subtle">
                           Disconnected
                         </span>
                       )}
@@ -327,95 +308,100 @@ export const TopNav: React.FC = () => {
 
                     {githubUser ? (
                       <div className="space-y-1.5">
-                        <button
-                          type="button"
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          className="w-full"
+                          leftIcon={<FolderGit2 className="h-4 w-4" />}
                           onClick={() => {
                             setIsProfileOpen(false);
                             setIsGitHubModalOpen(true);
                           }}
-                          className="ide-focus-ring flex w-full items-center justify-center gap-1.5 rounded-ide-control bg-ide-focus py-1.5 text-[11px] font-semibold text-ide-strong hover:bg-ide-focus/90"
                         >
-                          <FolderGit2 className="h-3.5 w-3.5" aria-hidden="true" />
                           Manage GitHub Repositories
-                        </button>
+                        </Button>
                         {isGitRepo && (
-                          <button
-                            type="button"
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="w-full"
                             disabled={gitLoading}
+                            leftIcon={<UploadCloud className="h-4 w-4" />}
                             onClick={() => {
                               setIsProfileOpen(false);
                               pushToGitHub();
                             }}
-                            className="ide-focus-ring flex w-full items-center justify-center gap-1.5 rounded-ide-control border border-ide-border bg-ide-bg py-1.5 text-[11px] font-medium text-ide-text hover:bg-ide-hover disabled:opacity-50"
                           >
-                            <UploadCloud className="h-3.5 w-3.5" aria-hidden="true" />
                             Push Current Branch
-                          </button>
+                          </Button>
                         )}
-                        <button
-                          type="button"
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full text-ide-muted hover:text-ide-rose"
+                          leftIcon={<LogOut className="h-4 w-4" />}
                           onClick={() => {
                             logoutGitHub();
                             setIsProfileOpen(false);
                           }}
-                          className="ide-focus-ring flex w-full items-center justify-center gap-1.5 rounded-ide-control py-1 text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-rose"
                         >
-                          <LogOut className="h-3 w-3" aria-hidden="true" />
                           Disconnect GitHub
-                        </button>
+                        </Button>
                       </div>
                     ) : (
-                      <button
-                        type="button"
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        className="w-full"
+                        leftIcon={<Github className="h-4 w-4" />}
                         onClick={() => {
                           setIsProfileOpen(false);
                           setIsGitHubModalOpen(true);
                         }}
-                        className="ide-focus-ring flex w-full items-center justify-center gap-1.5 rounded-ide-control bg-ide-focus py-1.5 text-[11px] font-semibold text-ide-strong hover:bg-ide-focus/90"
                       >
-                        <Github className="h-3.5 w-3.5" aria-hidden="true" />
                         Connect GitHub
-                      </button>
+                      </Button>
                     )}
                   </div>
 
-                  {/* AI Providers Configuration */}
-                  <div className="rounded-ide-control border border-ide-border bg-ide-surface px-3 py-2 space-y-2">
+                  {/* AI Providers */}
+                  <div className="rounded-ide-control border border-ide-border bg-ide-bg p-3 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-1.5 font-semibold text-ide-strong">
-                        <Cpu className="h-3.5 w-3.5 text-ide-purple" aria-hidden="true" />
-                        AI Providers
+                      <span className="flex items-center gap-1.5 font-medium text-ide-strong">
+                        <Cpu className="h-4 w-4 text-ide-purple" aria-hidden="true" />
+                        AI models
                       </span>
-                      <span className="max-w-[130px] truncate font-mono text-[10px] text-ide-cyan">
+                      <span className="max-w-[130px] truncate text-[11px] text-ide-muted">
                         {activeModel.name}
                       </span>
                     </div>
-                    <button
-                      type="button"
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="w-full"
                       onClick={() => {
                         setIsProfileOpen(false);
                         setIsModelSwitchingModalOpen(true);
                       }}
-                      className="ide-focus-ring w-full rounded-ide-control border border-ide-border bg-ide-bg py-1.5 text-center text-[11px] font-medium text-ide-text hover:bg-ide-hover"
                     >
                       Configure AI Providers
-                    </button>
+                    </Button>
                   </div>
 
-                  {/* Advanced Authentication Settings */}
+                  {/* Advanced Authentication */}
                   <button
                     type="button"
                     onClick={() => {
                       setIsProfileOpen(false);
                       setIsGitHubModalOpen(true);
                     }}
-                    className="ide-focus-ring flex w-full items-center justify-between rounded-ide-control border border-ide-border bg-ide-bg px-3 py-1.5 text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+                    className="ide-focus-ring flex w-full items-center justify-between rounded-ide-control border border-ide-border bg-ide-bg px-3 py-2 text-[12px] text-ide-muted transition-colors hover:bg-ide-hover hover:text-ide-text"
                   >
                     <span className="flex items-center gap-1.5">
-                      <KeyRound className="h-3 w-3 text-ide-subtle" aria-hidden="true" />
-                      Advanced authentication settings
+                      <KeyRound className="h-4 w-4 text-ide-subtle" aria-hidden="true" />
+                      Advanced authentication
                     </span>
-                    <span className="font-mono text-ide-subtle">GitHub</span>
+                    <span className="text-[11px] text-ide-subtle">GitHub</span>
                   </button>
                 </div>
               </div>
@@ -424,7 +410,6 @@ export const TopNav: React.FC = () => {
         </div>
       </header>
 
-      {/* Global Search and Command Palette Modal */}
       <GlobalSearchModal
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}

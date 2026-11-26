@@ -64,6 +64,11 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     setIsModelSwitchingModalOpen,
     pushToGitHub,
     pullFromGitHub,
+    setIsGraphGuideOpen,
+    canGoBack,
+    canGoForward,
+    goBack,
+    goForward,
   } = useIDE();
 
   const [query, setQuery] = useState(initialQuery);
@@ -286,6 +291,33 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       shortcut: 'Ctrl+`',
       action: () => {
         toggleTerminal();
+      },
+    },
+    {
+      id: 'cmd-graph-guide',
+      title: 'Knowledge Graph: Open Graph Guide',
+      category: 'Navigation',
+      action: () => {
+        setActiveView('graph');
+        setIsGraphGuideOpen(true);
+      },
+    },
+    {
+      id: 'cmd-nav-back',
+      title: 'Navigation: Go Back',
+      category: 'Navigation',
+      shortcut: 'Alt+Left',
+      action: () => {
+        if (canGoBack) goBack();
+      },
+    },
+    {
+      id: 'cmd-nav-forward',
+      title: 'Navigation: Go Forward',
+      category: 'Navigation',
+      shortcut: 'Alt+Right',
+      action: () => {
+        if (canGoForward) goForward();
       },
     },
     {

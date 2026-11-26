@@ -7,14 +7,19 @@ import {
   ChevronRight,
   FilePlus,
   FolderOpen,
+  MoreHorizontal,
+  Pin,
   Play,
   Replace,
+  RotateCcw,
   Save,
   Search,
   X,
 } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
 import type { WorkspaceDiagnostic } from '../../types/ide';
+import { SYNTAX_TOKEN_COLOR_STYLE, tokenizeLine } from '../../utils/syntaxHighlight';
+import { getWorkspaceDragId, parseWorkspaceDragPayload } from '../../utils/workspaceDragDrop';
 
 const getLanguageMark = (fileName: string) => {
   if (fileName.endsWith('.c') || fileName.endsWith('.h')) return 'C';
@@ -74,7 +79,44 @@ export const CodeEditor: React.FC = () => {
     diagnostics,
     setIsGitHubModalOpen,
     setSelectedEditorCode,
+    setSelectedGraphNode,
+    setAttachedContextPaths,
+    graphNodes,
+    pinnedFileIds,
+    closedTabHistory,
+    togglePinTab,
+    closeOtherTabs,
+    closeTabsToRight,
+    closeSavedTabs,
+    closeAllTabs,
+    reopenClosedTab,
   } = useIDE();
+
+  const [tabMenu, setTabMenu] = useState<{
+    anchor: 'overflow' | 'context';
+    targetFileId: string;
+    x?: number;
+    y?: number;
+  } | null>(null);
+  const tabMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!tabMenu) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (tabMenuRef.current && !tabMenuRef.current.contains(e.target as Node)) {
+        setTabMenu(null);
+      }
+    };
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTabMenu(null);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    window.addEventListener('keydown', handleEsc);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      window.removeEventListener('keydown', handleEsc);
+    };
+  }, [tabMenu]);
 
   const activeFile = files.find((file) => file.id === activeFileId);
   const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
@@ -94,13 +136,60 @@ export const CodeEditor: React.FC = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
   const diagOverlayRef = useRef<HTMLDivElement>(null);
+  const syntaxOverlayRef = useRef<HTMLDivElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
+  const editorViewStateRef = useRef<
+    Map<string, { selectionStart: number; selectionEnd: number; scrollTop: number; scrollLeft: number }>
+  >(new Map());
+  const prevActiveFileIdRef = useRef<string>('');
   const [hoveredDiag, setHoveredDiag] = useState<{
     diags: WorkspaceDiagnostic[];
     x: number;
     y: number;
   } | null>(null);
+
+  // Preserve per-file cursor & scroll position across tab switches
+  useEffect(() => {
+    const ta = textareaRef.current;
+    const prevId = prevActiveFileIdRef.current;
+    if (prevId && ta && prevId !== activeFileId) {
+      editorViewStateRef.current.set(prevId, {
+        selectionStart: ta.selectionStart || 0,
+        selectionEnd: ta.selectionEnd || 0,
+        scrollTop: ta.scrollTop || 0,
+        scrollLeft: ta.scrollLeft || 0,
+      });
+    }
+
+    if (activeFileId && ta && prevId !== activeFileId) {
+      const saved = editorViewStateRef.current.get(activeFileId) || {
+        selectionStart: 0,
+        selectionEnd: 0,
+        scrollTop: 0,
+        scrollLeft: 0,
+      };
+      requestAnimationFrame(() => {
+        if (!textareaRef.current) return;
+        const maxLen = textareaRef.current.value.length;
+        const start = Math.min(saved.selectionStart, maxLen);
+        const end = Math.min(saved.selectionEnd, maxLen);
+        textareaRef.current.setSelectionRange(start, end);
+        textareaRef.current.scrollTop = saved.scrollTop;
+        textareaRef.current.scrollLeft = saved.scrollLeft;
+        if (lineNumbersRef.current) lineNumbersRef.current.scrollTop = saved.scrollTop;
+        if (diagOverlayRef.current) {
+          diagOverlayRef.current.scrollTop = saved.scrollTop;
+          diagOverlayRef.current.scrollLeft = saved.scrollLeft;
+        }
+        if (syntaxOverlayRef.current) {
+          syntaxOverlayRef.current.scrollTop = saved.scrollTop;
+          syntaxOverlayRef.current.scrollLeft = saved.scrollLeft;
+        }
+      });
+    }
+    prevActiveFileIdRef.current = activeFileId;
+  }, [activeFileId]);
 
   const diagnosticsByLine = useMemo(() => {
     const map = new Map<number, WorkspaceDiagnostic[]>();
@@ -174,6 +263,10 @@ export const CodeEditor: React.FC = () => {
     if (diagOverlayRef.current) {
       diagOverlayRef.current.scrollTop = event.currentTarget.scrollTop;
       diagOverlayRef.current.scrollLeft = event.currentTarget.scrollLeft;
+    }
+    if (syntaxOverlayRef.current) {
+      syntaxOverlayRef.current.scrollTop = event.currentTarget.scrollTop;
+      syntaxOverlayRef.current.scrollLeft = event.currentTarget.scrollLeft;
     }
     if (hoveredDiag) {
       setHoveredDiag(null);
@@ -506,42 +599,46 @@ export const CodeEditor: React.FC = () => {
         )}
 
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-10">
-          <div className="w-full max-w-[540px] border-l border-ide-border-strong pl-6">
-            <div className="mb-6 flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center border border-ide-focus bg-ide-selected font-mono text-sm font-semibold text-ide-focus" aria-hidden="true">
-                {'<>'}
-              </div>
-              <div>
-                <div className="flex items-baseline gap-2">
-                  <h1 className="text-lg font-semibold tracking-tight text-ide-strong">IntelliCode IDE</h1>
-                  <span className="font-mono text-[10px] text-ide-subtle">v0.24</span>
-                </div>
-                <p className="mt-1 text-xs text-ide-muted">Workspace is empty. Create a file, open a local folder, or open a GitHub repo.</p>
-              </div>
+          <div className="w-full max-w-[520px] rounded-ide-panel border border-ide-border bg-ide-panel p-6">
+            <div className="mb-5">
+              <h1 className="font-sans text-[20px] font-semibold text-ide-strong">
+                {files.length > 0
+                  ? 'No file open'
+                  : workspacePath
+                    ? 'Empty folder'
+                    : 'Open a workspace'}
+              </h1>
+              <p className="mt-1 font-sans text-[13px] text-ide-muted">
+                {files.length > 0
+                  ? 'Select a file from the Explorer or use Quick Open to start editing.'
+                  : workspacePath
+                    ? 'Create your first file or folder in this workspace.'
+                    : 'Open a local folder, connect a GitHub repository, or create a new file.'}
+              </p>
             </div>
 
             {pendingReconnect && (
-              <div className="mb-6 border border-ide-amber/40 bg-ide-amber/10 p-4 font-sans text-xs">
+              <div className="mb-5 rounded-ide-control border border-ide-amber/40 bg-ide-amber/10 p-4 font-sans text-[12px]">
                 <div className="flex items-start gap-3">
-                  <AlertCircle className="h-5 w-5 shrink-0 text-ide-amber mt-0.5" />
+                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-ide-amber" />
                   <div className="min-w-0 flex-1">
-                    <h2 className="text-sm font-semibold text-ide-strong">Reconnect &ldquo;{pendingReconnect.folderName}&rdquo;</h2>
-                    <p className="mt-1 text-xs text-ide-muted leading-relaxed">
-                      Your browser requires permission to access the local folder after a refresh. Click Reconnect to resume editing your project files.
+                    <h2 className="text-[14px] font-semibold text-ide-strong">Reconnect &ldquo;{pendingReconnect.folderName}&rdquo;</h2>
+                    <p className="mt-1 text-[12px] text-ide-muted leading-relaxed">
+                      Browser permission is required to resume editing this local folder.
                     </p>
                     <div className="mt-3 flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => reconnectWorkspace()}
-                        className="ide-focus-ring flex items-center gap-1.5 bg-ide-focus px-3 py-1.5 text-xs font-semibold text-white hover:bg-ide-focus/90"
+                        className="ide-focus-ring inline-flex h-8 items-center gap-1.5 rounded-ide-control bg-ide-focus px-3 text-[13px] font-medium text-ide-onAccent hover:bg-ide-accentHover"
                       >
-                        <FolderOpen className="h-3.5 w-3.5" />
-                        Reconnect Folder
+                        <FolderOpen className="h-4 w-4" />
+                        Reconnect folder
                       </button>
                       <button
                         type="button"
                         onClick={dismissReconnect}
-                        className="ide-focus-ring border border-ide-border px-3 py-1.5 text-xs text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+                        className="ide-focus-ring inline-flex h-8 items-center rounded-ide-control border border-ide-borderStrong px-3 text-[13px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
                       >
                         Dismiss
                       </button>
@@ -552,16 +649,16 @@ export const CodeEditor: React.FC = () => {
             )}
 
             {isRestoringWorkspace && (
-              <div className="mb-6 flex items-center gap-2.5 border border-ide-border bg-ide-surface px-4 py-3 font-mono text-xs text-ide-muted">
+              <div className="mb-5 flex items-center gap-2.5 rounded-ide-control border border-ide-border bg-ide-surface px-4 py-3 font-sans text-[13px] text-ide-muted">
                 <div className="h-2.5 w-2.5 rounded-full bg-ide-focus animate-pulse" />
-                <span>Restoring workspace from disk...</span>
+                <span>Restoring workspace from disk…</span>
               </div>
             )}
 
             {isPromptingNewFile ? (
-              <form onSubmit={handleSubmitNewFile} className="border-y border-ide-border py-4">
-                <label className="mb-1.5 block font-mono text-[10px] text-ide-focus" htmlFor="welcome-new-file">
-                  Enter file path (e.g. index.html, src/App.tsx, main.py)
+              <form onSubmit={handleSubmitNewFile} className="border-t border-ide-border pt-4">
+                <label className="mb-1.5 block font-sans text-[12px] font-medium text-ide-text" htmlFor="welcome-new-file">
+                  File path (e.g. index.html, src/App.tsx, main.py)
                 </label>
                 <div className="flex items-center gap-2">
                   <input
@@ -573,60 +670,66 @@ export const CodeEditor: React.FC = () => {
                     onKeyDown={(e) => {
                       if (e.key === 'Escape') setIsPromptingNewFile(false);
                     }}
-                    placeholder="e.g. src/main.ts"
-                    className="ide-focus-ring min-w-0 flex-1 rounded-ide-control border border-ide-border-strong bg-ide-surface px-3 py-1.5 font-mono text-xs text-ide-strong outline-none"
+                    placeholder="src/main.ts"
+                    className="ide-focus-ring h-8 min-w-0 flex-1 rounded-ide-control border border-ide-borderStrong bg-ide-bg px-3 font-mono text-[13px] text-ide-strong outline-none"
                   />
-                  <button type="submit" className="ide-focus-ring rounded-ide-control bg-ide-focus px-3 py-1.5 text-xs font-semibold text-white">
+                  <button type="submit" className="ide-focus-ring h-8 rounded-ide-control bg-ide-focus px-3 text-[13px] font-medium text-ide-onAccent hover:bg-ide-accentHover">
                     Create
                   </button>
                   <button
                     type="button"
                     onClick={() => setIsPromptingNewFile(false)}
-                    className="ide-focus-ring rounded-ide-control border border-ide-border px-3 py-1.5 text-xs text-ide-muted hover:text-ide-text"
+                    className="ide-focus-ring h-8 rounded-ide-control border border-ide-borderStrong px-3 text-[13px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
                   >
                     Cancel
                   </button>
                 </div>
               </form>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2 border-y border-ide-border py-4">
+            ) : files.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2 border-t border-ide-border pt-4">
                 <button
                   type="button"
-                  onClick={() => setIsPromptingNewFile(true)}
-                  className="ide-focus-ring ide-control inline-flex min-h-[34px] items-center gap-2 bg-ide-focus px-3 text-xs font-semibold text-white hover:bg-ide-focus/85"
+                  onClick={() => openFile(files[0].id)}
+                  className="ide-focus-ring inline-flex h-8 items-center gap-2 rounded-ide-control bg-ide-focus px-3 text-[13px] font-medium text-ide-onAccent hover:bg-ide-accentHover"
                 >
-                  <FilePlus className="h-3.5 w-3.5" aria-hidden="true" />
-                  New file
+                  <FilePlus className="h-4 w-4" aria-hidden="true" />
+                  Open {files[0].name}
                 </button>
                 <button
                   type="button"
-                  onClick={handleSelectFolder}
-                  className="ide-focus-ring ide-control inline-flex min-h-[34px] items-center gap-2 border border-ide-border-strong px-3 text-xs font-medium text-ide-text hover:bg-ide-hover hover:text-ide-strong"
+                  onClick={() => setActiveView('graph')}
+                  className="ide-focus-ring inline-flex h-8 items-center gap-2 rounded-ide-control border border-ide-borderStrong bg-ide-surface px-3 text-[13px] font-medium text-ide-text hover:bg-ide-hover"
                 >
-                  <FolderOpen className="h-3.5 w-3.5 text-ide-focus" aria-hidden="true" />
+                  Explore architecture
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2 border-t border-ide-border pt-4">
+                <button
+                  type="button"
+                  onClick={handleSelectFolder}
+                  className="ide-focus-ring inline-flex h-8 items-center gap-2 rounded-ide-control bg-ide-focus px-3 text-[13px] font-medium text-ide-onAccent hover:bg-ide-accentHover"
+                >
+                  <FolderOpen className="h-4 w-4" aria-hidden="true" />
                   Open folder
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsGitHubModalOpen(true)}
-                  className="ide-focus-ring ide-control inline-flex min-h-[34px] items-center gap-2 border border-ide-border-strong px-3 text-xs font-medium text-ide-text hover:bg-ide-hover hover:text-ide-strong"
+                  className="ide-focus-ring inline-flex h-8 items-center gap-2 rounded-ide-control border border-ide-borderStrong bg-ide-surface px-3 text-[13px] font-medium text-ide-text hover:bg-ide-hover"
                 >
-                  <span className="font-mono text-ide-cyan">GH</span>
-                  Open GitHub Repo
+                  Clone repository
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsPromptingNewFile(true)}
+                  className="ide-focus-ring inline-flex h-8 items-center gap-2 rounded-ide-control border border-ide-borderStrong bg-ide-surface px-3 text-[13px] font-medium text-ide-text hover:bg-ide-hover"
+                >
+                  <FilePlus className="h-4 w-4" aria-hidden="true" />
+                  New file
                 </button>
               </div>
             )}
-
-            <div className="mt-5 grid max-w-[460px] grid-cols-[1fr_auto] border-y border-ide-border font-mono text-[10px] text-ide-muted">
-              <span className="border-b border-ide-border py-2">Show all commands</span>
-              <kbd className="border-b border-l border-ide-border px-2 py-2 text-ide-text">Ctrl+Shift+P</kbd>
-              <span className="border-b border-ide-border py-2">Quick file open</span>
-              <kbd className="border-b border-l border-ide-border px-2 py-2 text-ide-text">Ctrl+P</kbd>
-              <span className="border-b border-ide-border py-2">Toggle integrated terminal</span>
-              <kbd className="border-b border-l border-ide-border px-2 py-2 text-ide-text">Ctrl+`</kbd>
-              <span className="py-2">Save changes</span>
-              <kbd className="border-l border-ide-border px-2 py-2 text-ide-text">Ctrl+S</kbd>
-            </div>
           </div>
         </div>
       </main>
@@ -640,69 +743,215 @@ export const CodeEditor: React.FC = () => {
   const hasLiveDisk = Boolean(activeFile.fileHandle || workspacePath);
 
   return (
-    <main id="editor-workspace" className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-ide-bg" data-purpose="editor-workspace">
-      <div className="flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-ide-border bg-ide-shell" role="tablist" aria-label="Open files">
-        {openFileIds.map((fileId) => {
-          const file = files.find((candidate) => candidate.id === fileId);
-          if (!file) return null;
-          const isActive = file.id === activeFile.id;
+    <main
+      id="editor-workspace"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        const parsed = parseWorkspaceDragPayload(e.dataTransfer, getWorkspaceDragId(workspacePath), files);
+        if (parsed.valid && parsed.file) {
+          e.preventDefault();
+          openFile(parsed.file.id);
+        }
+      }}
+      className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-ide-bg"
+      data-purpose="editor-workspace"
+    >
+      <div className="relative flex h-9 shrink-0 items-stretch border-b border-ide-border bg-ide-shell">
+        <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto" role="tablist" aria-label="Open files">
+          {openFileIds.map((fileId) => {
+            const file = files.find((candidate) => candidate.id === fileId);
+            if (!file) return null;
+            const isActive = file.id === activeFile.id;
+            const isPinned = pinnedFileIds.includes(file.id);
+            return (
+              <div
+                key={file.id}
+                data-testid={`editor-tab-${file.id}`}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setTabMenu({ anchor: 'context', targetFileId: file.id, x: e.clientX, y: e.clientY });
+                }}
+                className={`group flex h-full shrink-0 items-center border-r border-ide-border ${isActive ? 'border-t-2 border-t-ide-focus bg-ide-bg text-ide-strong' : 'border-t-2 border-t-transparent text-ide-muted hover:bg-ide-hover'}`}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => openFile(file.id)}
+                  className="ide-focus-ring flex h-full items-center gap-2 px-3 text-left font-sans text-[13px]"
+                >
+                  {isPinned && <Pin className="h-3 w-3 shrink-0 text-ide-focus" aria-label="Pinned tab" />}
+                  <span className={`font-mono text-[10px] font-semibold ${getLanguageClass(file.name)}`}>{getLanguageMark(file.name)}</span>
+                  <span className="font-sans">{file.name}</span>
+                  {file.isDirty && <span className="h-1.5 w-1.5 rounded-full bg-ide-amber" title="Unsaved changes" aria-label="Unsaved changes" />}
+                </button>
+                {!isPinned && (
+                  <button
+                    type="button"
+                    onClick={() => closeFile(file.id)}
+                    className="ide-focus-ring mr-1 flex h-6 w-6 items-center justify-center text-ide-subtle opacity-0 hover:text-ide-text focus-visible:opacity-100 group-hover:opacity-100"
+                    title={`Close ${file.name}`}
+                    aria-label={`Close ${file.name}`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+
+          {isPromptingNewFile ? (
+            <form onSubmit={handleSubmitNewFile} className="flex h-full items-center gap-1 px-2 bg-ide-surface border-r border-ide-border">
+              <input
+                type="text"
+                autoFocus
+                value={newFileInput}
+                onChange={(e) => setNewFileInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setIsPromptingNewFile(false);
+                }}
+                placeholder="filename.ts"
+                className="w-32 bg-ide-bg px-1.5 py-0.5 font-mono text-[11px] text-ide-strong border border-ide-focus outline-none rounded-ide-control"
+              />
+              <button type="submit" className="text-ide-emerald hover:text-ide-strong p-0.5" title="Create file">
+                <Check className="h-3.5 w-3.5" />
+              </button>
+              <button type="button" onClick={() => setIsPromptingNewFile(false)} className="text-ide-muted hover:text-ide-text p-0.5" title="Cancel">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsPromptingNewFile(true)}
+              className="ide-focus-ring flex h-full w-9 shrink-0 items-center justify-center text-ide-subtle hover:bg-ide-hover hover:text-ide-text"
+              title="New file tab"
+              aria-label="New file tab"
+            >
+              <FilePlus className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        <button
+          type="button"
+          data-testid="editor-tab-actions-button"
+          onClick={() =>
+            setTabMenu((prev) =>
+              prev?.anchor === 'overflow' ? null : { anchor: 'overflow', targetFileId: activeFile.id }
+            )
+          }
+          className="ide-focus-ring flex h-full w-9 shrink-0 items-center justify-center border-l border-ide-border bg-ide-shell text-ide-muted hover:bg-ide-hover hover:text-ide-strong"
+          title="Editor tab actions"
+          aria-label="Editor tab actions"
+          aria-expanded={tabMenu?.anchor === 'overflow'}
+        >
+          <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+        </button>
+
+        {tabMenu && (() => {
+          const targetId = tabMenu.targetFileId;
+          const isTargetPinned = pinnedFileIds.includes(targetId);
+          const hasReopenable = closedTabHistory.some((id) => !openFileIds.includes(id));
           return (
-            <div key={file.id} className={`group flex h-full shrink-0 items-center border-r border-ide-border ${isActive ? 'border-t-2 border-t-ide-focus bg-ide-bg text-ide-strong' : 'border-t-2 border-t-transparent text-ide-muted hover:bg-ide-hover'}`}>
+            <div
+              ref={tabMenuRef}
+              role="menu"
+              data-testid="editor-tab-actions-menu"
+              style={
+                tabMenu.anchor === 'context' && tabMenu.x !== undefined && tabMenu.y !== undefined
+                  ? { position: 'fixed', left: tabMenu.x, top: tabMenu.y }
+                  : undefined
+              }
+              className={`${
+                tabMenu.anchor === 'overflow' ? 'absolute right-1 top-9' : ''
+              } z-40 w-48 rounded-ide-panel border border-ide-border-strong bg-ide-panel p-1 shadow-lg`}
+            >
               <button
                 type="button"
-                role="tab"
-                aria-selected={isActive}
-                onClick={() => openFile(file.id)}
-                className="ide-focus-ring flex h-full items-center gap-2 px-3 text-left text-[11px]"
+                role="menuitem"
+                onClick={() => {
+                  togglePinTab(targetId);
+                  setTabMenu(null);
+                }}
+                className="ide-focus-ring flex w-full items-center gap-2 rounded-ide-small px-2.5 py-1.5 text-left text-xs text-ide-text hover:bg-ide-hover"
               >
-                <span className={`font-mono text-[10px] font-semibold ${getLanguageClass(file.name)}`}>{getLanguageMark(file.name)}</span>
-                <span className="font-mono">{file.name}</span>
-                {file.isDirty && <span className="h-1.5 w-1.5 bg-ide-focus" title="Unsaved changes" aria-label="Unsaved changes" />}
+                <Pin className="h-3.5 w-3.5 text-ide-focus" aria-hidden="true" />
+                <span>{isTargetPinned ? 'Unpin tab' : 'Pin tab'}</span>
+              </button>
+              <div className="my-1 border-t border-ide-border" />
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  closeFile(targetId);
+                  setTabMenu(null);
+                }}
+                className="ide-focus-ring flex w-full items-center justify-between rounded-ide-small px-2.5 py-1.5 text-left text-xs text-ide-text hover:bg-ide-hover"
+              >
+                <span>Close</span>
               </button>
               <button
                 type="button"
-                onClick={() => closeFile(file.id)}
-                className="ide-focus-ring mr-1 flex h-6 w-6 items-center justify-center text-ide-subtle opacity-0 hover:text-ide-text focus-visible:opacity-100 group-hover:opacity-100"
-                title={`Close ${file.name}`}
-                aria-label={`Close ${file.name}`}
+                role="menuitem"
+                onClick={() => {
+                  closeOtherTabs(targetId);
+                  setTabMenu(null);
+                }}
+                className="ide-focus-ring flex w-full items-center justify-between rounded-ide-small px-2.5 py-1.5 text-left text-xs text-ide-text hover:bg-ide-hover"
               >
-                <X className="h-3.5 w-3.5" />
+                <span>Close others</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  closeTabsToRight(targetId);
+                  setTabMenu(null);
+                }}
+                className="ide-focus-ring flex w-full items-center justify-between rounded-ide-small px-2.5 py-1.5 text-left text-xs text-ide-text hover:bg-ide-hover"
+              >
+                <span>Close to the right</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  closeSavedTabs();
+                  setTabMenu(null);
+                }}
+                className="ide-focus-ring flex w-full items-center justify-between rounded-ide-small px-2.5 py-1.5 text-left text-xs text-ide-text hover:bg-ide-hover"
+              >
+                <span>Close saved</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  closeAllTabs(false);
+                  setTabMenu(null);
+                }}
+                className="ide-focus-ring flex w-full items-center justify-between rounded-ide-small px-2.5 py-1.5 text-left text-xs text-ide-text hover:bg-ide-hover"
+              >
+                <span>Close all unpinned</span>
+              </button>
+              <div className="my-1 border-t border-ide-border" />
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!hasReopenable}
+                onClick={() => {
+                  reopenClosedTab();
+                  setTabMenu(null);
+                }}
+                className="ide-focus-ring flex w-full items-center gap-2 rounded-ide-small px-2.5 py-1.5 text-left text-xs text-ide-text hover:bg-ide-hover disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <RotateCcw className="h-3.5 w-3.5 text-ide-muted" aria-hidden="true" />
+                <span>Reopen closed</span>
               </button>
             </div>
           );
-        })}
-
-        {isPromptingNewFile ? (
-          <form onSubmit={handleSubmitNewFile} className="flex h-full items-center gap-1 px-2 bg-ide-surface border-r border-ide-border">
-            <input
-              type="text"
-              autoFocus
-              value={newFileInput}
-              onChange={(e) => setNewFileInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') setIsPromptingNewFile(false);
-              }}
-              placeholder="filename.ts"
-              className="w-32 bg-ide-bg px-1.5 py-0.5 font-mono text-[11px] text-ide-strong border border-ide-focus outline-none rounded-ide-control"
-            />
-            <button type="submit" className="text-ide-emerald hover:text-ide-strong p-0.5" title="Create file">
-              <Check className="h-3.5 w-3.5" />
-            </button>
-            <button type="button" onClick={() => setIsPromptingNewFile(false)} className="text-ide-muted hover:text-ide-text p-0.5" title="Cancel">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </form>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setIsPromptingNewFile(true)}
-            className="ide-focus-ring flex h-full w-9 shrink-0 items-center justify-center text-ide-subtle hover:bg-ide-hover hover:text-ide-text"
-            title="New file tab"
-            aria-label="New file tab"
-          >
-            <FilePlus className="h-3.5 w-3.5" />
-          </button>
-        )}
+        })()}
       </div>
 
       {/* Breadcrumbs & Actions */}
@@ -742,6 +991,32 @@ export const CodeEditor: React.FC = () => {
           >
             <Search className="h-3 w-3" aria-hidden="true" />
             <span className="hidden sm:inline">Find</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const fileNode = graphNodes.find((n) => n.id === `node-file-${activeFile.id}` || n.path === activeFile.path);
+              if (fileNode) setSelectedGraphNode(fileNode);
+              setActiveView('graph');
+            }}
+            className="ide-focus-ring flex items-center gap-1 rounded-ide-control px-1.5 py-0.5 text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+            title="Reveal current file in Knowledge Graph"
+          >
+            <span>Graph</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setAttachedContextPaths((prev) =>
+                prev.includes(activeFile.path) ? prev : [...prev, activeFile.path],
+              );
+            }}
+            className="ide-focus-ring flex items-center gap-1 rounded-ide-control px-1.5 py-0.5 text-[10px] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+            title="Attach current file to AI context"
+          >
+            <span>Attach</span>
           </button>
 
           <button
@@ -954,6 +1229,37 @@ export const CodeEditor: React.FC = () => {
         )}
 
         <div className="relative h-full min-h-0 min-w-0 flex-1 overflow-hidden">
+          {/* Theme-aware syntax highlighting overlay */}
+          <div
+            ref={syntaxOverlayRef}
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-0 overflow-hidden p-2 pb-32 font-mono select-none ${
+              editorSettings.wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'
+            }`}
+            style={{
+              tabSize: editorSettings.tabSize,
+              fontSize: `${editorSettings.fontSize}px`,
+              lineHeight: `${editorSettings.fontSize * 1.6}px`,
+            }}
+          >
+            {lines.map((lineText, idx) => {
+              const tokens = tokenizeLine(lineText, activeFile.language);
+              return (
+                <div key={idx} className="min-h-[1em]">
+                  {tokens.length === 0 ? (
+                    ' '
+                  ) : (
+                    tokens.map((tok, tIdx) => (
+                      <span key={tIdx} style={{ color: SYNTAX_TOKEN_COLOR_STYLE[tok.type] }}>
+                        {tok.text}
+                      </span>
+                    ))
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
           {/* Diagnostic squiggly underline overlay */}
           <div
             ref={diagOverlayRef}
@@ -1030,13 +1336,14 @@ export const CodeEditor: React.FC = () => {
             spellCheck={false}
             wrap={editorSettings.wordWrap ? 'on' : 'off'}
             aria-label={`Editing ${activeFile.path}`}
-            className={`relative z-10 h-full w-full resize-none overflow-auto border-0 bg-transparent p-2 pb-32 font-mono text-ide-text outline-none selection:bg-ide-focus/30 ${
+            className={`relative z-10 h-full w-full resize-none overflow-auto border-0 bg-transparent p-2 pb-32 font-mono text-transparent caret-ide-text outline-none selection:bg-ide-focus/30 ${
               editorSettings.wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'
             }`}
             style={{
               tabSize: editorSettings.tabSize,
               fontSize: `${editorSettings.fontSize}px`,
               lineHeight: `${editorSettings.fontSize * 1.6}px`,
+              caretColor: 'rgb(var(--ide-text))',
             }}
           />
 

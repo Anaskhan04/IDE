@@ -139,16 +139,38 @@ export interface SymbolInfo {
   calledBy?: string[];
 }
 
-export type CBMNodeType = 'Function' | 'Class' | 'File' | 'Route' | 'Module' | 'Test' | 'MCP';
-export type CBMEdgeType = 
-  | 'CALLS' 
-  | 'CALL_REFERENCE' 
-  | 'IMPORTS' 
-  | 'DEFINES' 
-  | 'HTTP_CALLS' 
-  | 'DATA_FLOWS' 
-  | 'INHERITS' 
+export type CBMNodeType =
+  | 'Function'
+  | 'Class'
+  | 'Interface'
+  | 'Type'
+  | 'File'
+  | 'Route'
+  | 'Module'
+  | 'Package'
+  | 'Test'
+  | 'MCP';
+
+export type CBMEdgeType =
+  | 'CONTAINS'
+  | 'DEFINES'
+  | 'EXPORTS'
+  | 'IMPORTS'
+  | 'CALLS'
+  | 'CALL_REFERENCE'
+  | 'REFERENCES'
+  | 'EXTENDS'
+  | 'IMPLEMENTS'
+  | 'TYPE_REFERENCE'
+  | 'RENDERS'
+  | 'PACKAGE_DEPENDENCY'
+  | 'TEST_REFERENCE'
+  | 'HTTP_CALLS'
+  | 'DATA_FLOWS'
+  | 'INHERITS'
   | 'TESTS';
+
+export type EdgeResolutionStatus = 'direct' | 'semantic' | 'inferred' | 'unresolved';
 
 export interface GraphNode {
   id: string;
@@ -159,6 +181,9 @@ export interface GraphNode {
   architectureArea?: 'frontend' | 'backend' | 'database' | 'utilities' | 'tests' | 'core';
   isGenerated?: boolean;
   path: string;
+  line?: number;
+  signature?: string;
+  exported?: boolean;
   impactStatus: 'none' | 'modified' | 'direct' | 'indirect';
   x?: number;
   y?: number;
@@ -173,6 +198,10 @@ export interface GraphEdge {
   target: string;
   type: CBMEdgeType;
   label?: string;
+  sourceFilePath?: string;
+  sourceLine?: number;
+  resolutionStatus?: EdgeResolutionStatus;
+  evidence?: string;
   isImpactPath?: boolean;
   confidence?: number;
 }

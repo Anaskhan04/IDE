@@ -37,6 +37,7 @@ import {
   X,
 } from 'lucide-react';
 import { useIDE } from '../../context/IDEContext';
+import { getWorkspaceDragId, serializeDragPayload } from '../../utils/workspaceDragDrop';
 import type { ProjectFile } from '../../types/ide';
 import { GitDiffModal } from '../git/GitDiffModal';
 
@@ -50,15 +51,22 @@ interface FileTreeNode {
 
 const fileTypeLabel = (fileName: string) => {
   if (fileName.endsWith('.c') || fileName.endsWith('.h')) return 'C';
-  if (fileName.endsWith('.ts') || fileName.endsWith('.tsx') || fileName.endsWith('.js') || fileName.endsWith('.jsx')) return 'TS';
+  if (fileName.endsWith('.js') || fileName.endsWith('.jsx')) return 'JS';
+  if (fileName.endsWith('.ts') || fileName.endsWith('.tsx')) return 'TS';
+  if (fileName.endsWith('.py')) return 'PY';
+  if (fileName.endsWith('.html')) return 'HT';
+  if (fileName.endsWith('.css')) return 'CS';
+  if (fileName.endsWith('.md')) return 'MD';
   if (fileName.endsWith('.json')) return '{}';
   return '#';
 };
 
 const fileTypeClass = (fileName: string) => {
   if (fileName.endsWith('.c') || fileName.endsWith('.h')) return 'text-ide-purple';
-  if (fileName.endsWith('.ts') || fileName.endsWith('.tsx') || fileName.endsWith('.js') || fileName.endsWith('.jsx')) return 'text-ide-cyan';
-  if (fileName.endsWith('.json')) return 'text-ide-amber';
+  if (fileName.endsWith('.js') || fileName.endsWith('.jsx') || fileName.endsWith('.json')) return 'text-ide-amber';
+  if (fileName.endsWith('.ts') || fileName.endsWith('.tsx') || fileName.endsWith('.css')) return 'text-ide-cyan';
+  if (fileName.endsWith('.py')) return 'text-ide-emerald';
+  if (fileName.endsWith('.html')) return 'text-ide-rose';
   return 'text-ide-muted';
 };
 
@@ -343,23 +351,33 @@ export const Sidebar: React.FC = () => {
         return (
           <div key={child.fullPath} role="treeitem" aria-expanded={!isCollapsed}>
             <div
-              className={`group flex min-h-[26px] items-center border-l ${
+              className={`group flex h-7 items-center border-l-2 ${
                 isFolderSelected
-                  ? 'border-ide-focus bg-ide-selected/40 text-ide-strong'
-                  : 'border-transparent text-ide-text hover:bg-ide-hover/60'
+                  ? 'border-ide-focus bg-ide-selected/50 text-ide-strong'
+                  : 'border-transparent text-ide-text hover:bg-ide-hover'
               }`}
               style={{ paddingLeft: `${8 + depth * 12}px` }}
             >
               <button
                 type="button"
+                draggable
+                onDragStart={(e) => {
+                  serializeDragPayload(e.dataTransfer, {
+                    kind: 'file',
+                    workspaceId: getWorkspaceDragId(workspacePath),
+                    fileId: file.id,
+                    filePath: file.path,
+                    label: file.name,
+                  });
+                }}
                 onClick={() => {
                   toggleFolder(child.fullPath);
                   setSelectedFolder(child.fullPath);
                 }}
-                className="ide-focus-ring flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left text-[11px]"
+                className="ide-focus-ring flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left font-sans text-[13px]"
               >
-                {isCollapsed ? <ChevronRight className="h-3 w-3 shrink-0 text-ide-subtle" /> : <ChevronDown className="h-3 w-3 shrink-0 text-ide-subtle" />}
-                <Folder className="h-3.5 w-3.5 shrink-0 text-ide-focus" aria-hidden="true" />
+                {isCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ide-subtle" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ide-subtle" />}
+                <Folder className="h-4 w-4 shrink-0 text-ide-focus" aria-hidden="true" />
                 <span className="truncate">{child.name}</span>
               </button>
               <button
@@ -391,7 +409,8 @@ export const Sidebar: React.FC = () => {
           key={file.id}
           id={`explorer-file-${file.id}`}
           role="treeitem"
-          className={`group flex min-h-[26px] items-center border-l-2 ${isActive ? 'border-ide-focus bg-ide-selected text-ide-strong' : 'border-transparent text-ide-muted hover:bg-ide-hover/60'}`}
+          aria-selected={isActive}
+          className={`group flex h-7 items-center border-l-2 ${isActive ? 'border-ide-focus bg-ide-selected text-ide-strong' : 'border-transparent text-ide-muted hover:bg-ide-hover hover:text-ide-text'}`}
           style={{ paddingLeft: `${18 + depth * 12}px` }}
         >
           {isRenaming ? (
@@ -416,6 +435,16 @@ export const Sidebar: React.FC = () => {
             <>
               <button
                 type="button"
+                draggable
+                onDragStart={(e) => {
+                  serializeDragPayload(e.dataTransfer, {
+                    kind: 'file',
+                    workspaceId: getWorkspaceDragId(workspacePath),
+                    fileId: file.id,
+                    filePath: file.path,
+                    label: file.name,
+                  });
+                }}
                 onClick={() => {
                   openFile(file.id);
                   const parentFolder = file.path.includes('/')
@@ -423,11 +452,11 @@ export const Sidebar: React.FC = () => {
                     : '';
                   setSelectedFolder(parentFolder);
                 }}
-                className="ide-focus-ring flex min-w-0 flex-1 items-center gap-2 py-1 pr-1 text-left text-[11px]"
+                className="ide-focus-ring flex min-w-0 flex-1 items-center gap-2 py-1 pr-1 text-left font-sans text-[13px]"
               >
                 <span className={`w-5 shrink-0 text-center font-mono text-[10px] font-semibold ${fileTypeClass(file.name)}`}>{fileTypeLabel(file.name)}</span>
-                <span className="truncate font-mono">{file.name}</span>
-                {file.isDirty && <span className="h-1.5 w-1.5 shrink-0 bg-ide-focus" title="Unsaved changes" aria-label="Unsaved changes" />}
+                <span className="truncate font-sans">{file.name}</span>
+                {file.isDirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ide-amber" title="Unsaved changes" aria-label="Unsaved changes" />}
               </button>
               <div className="flex shrink-0 items-center gap-0.5 pr-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
                 <button
@@ -581,7 +610,7 @@ export const Sidebar: React.FC = () => {
   return (
     <>
       <aside
-        className="flex w-64 shrink-0 flex-col border-r border-ide-border bg-ide-sidebar select-none"
+        className="flex h-full w-full flex-col bg-ide-sidebar select-none"
         data-purpose="multi-view-sidebar"
       >
         <input
@@ -599,8 +628,8 @@ export const Sidebar: React.FC = () => {
         {/* 1. EXPLORER VIEW */}
         {sidebarView === 'explorer' && (
           <div className="flex h-full flex-col min-h-0">
-            <div className="flex h-10 shrink-0 items-center justify-between border-b border-ide-border px-3">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ide-muted">Explorer</span>
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-ide-border px-3">
+              <span className="font-sans text-[12px] font-semibold text-ide-strong">Explorer</span>
               <div className="flex items-center gap-0.5">
                 <button
                   type="button"
@@ -755,7 +784,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setOutlineOpen((open) => !open)}
-                className="ide-focus-ring flex min-h-[30px] w-full items-center gap-1.5 border-b border-ide-border px-3 text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+                className="ide-focus-ring flex min-h-[28px] w-full items-center gap-1.5 border-b border-ide-border px-3 text-left font-sans text-[12px] font-medium text-ide-muted hover:bg-ide-hover hover:text-ide-text"
                 aria-expanded={outlineOpen}
               >
                 {outlineOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -803,7 +832,7 @@ export const Sidebar: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setTimelineOpen((open) => !open)}
-                className="ide-focus-ring flex min-h-[30px] w-full items-center gap-1.5 px-3 text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-ide-muted hover:bg-ide-hover hover:text-ide-text"
+                className="ide-focus-ring flex min-h-[28px] w-full items-center gap-1.5 px-3 text-left font-sans text-[12px] font-medium text-ide-muted hover:bg-ide-hover hover:text-ide-text"
                 aria-expanded={timelineOpen}
               >
                 {timelineOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -825,8 +854,8 @@ export const Sidebar: React.FC = () => {
         {/* 2. SEARCH VIEW */}
         {sidebarView === 'search' && (
           <div className="flex h-full flex-col min-h-0">
-            <div className="flex h-10 shrink-0 items-center justify-between border-b border-ide-border px-3">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ide-muted">Search</span>
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-ide-border px-3">
+              <span className="font-sans text-[12px] font-semibold text-ide-strong">Search</span>
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
@@ -931,9 +960,9 @@ export const Sidebar: React.FC = () => {
         {sidebarView === 'git' && (
           <div className="flex h-full flex-col min-h-0">
             {/* Git Header Actions */}
-            <div className="flex h-10 shrink-0 items-center justify-between border-b border-ide-border px-3">
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-ide-border px-3">
               <div className="min-w-0 flex items-center gap-1.5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ide-muted">Source Control</span>
+                <span className="font-sans text-[12px] font-semibold text-ide-strong">Source Control</span>
                 {isGitRepo && (
                   <span className="truncate font-mono text-[10px] text-ide-subtle" title={repoRoot || ''}>
                     · {githubLinkedRepo ? `${githubLinkedRepo.owner}/${githubLinkedRepo.repo}` : (repoRoot?.split('/').pop() || 'repo')}
