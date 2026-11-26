@@ -107,3 +107,16 @@ See [PROJECT_ROADMAP.md](./PROJECT_ROADMAP.md) for the full breakdown:
 - Workspace file operations enforce `realpath` symlink-escape protection.
 - Sensitive files (`.env`, `.git`, `.pem`, `.key`, credentials) are excluded from AI context and generation targets.
 - AI provider URLs validate against private/loopback SSRF targets (allowing `127.0.0.1` / `localhost` only for local Ollama).
+
+See [SECURITY.md](./SECURITY.md) for full details.
+
+---
+
+## Documentation & Repository Resources
+
+- **Architecture & Design:** [INTELLIGENCE_ARCHITECTURE.md](./INTELLIGENCE_ARCHITECTURE.md) · [DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md) · [AGENTS.md](./AGENTS.md)
+- **Project Planning & Releases:** [PROJECT_ROADMAP.md](./PROJECT_ROADMAP.md) · [CHANGELOG.md](./CHANGELOG.md)
+- **Collaboration & Configuration:** [CONTRIBUTING.md](./CONTRIBUTING.md) · [SECURITY.md](./SECURITY.md) · [.env.example](./.env.example)
+- **Demonstration Fixture:** [demo/task-management-system/README.md](./demo/task-management-system/README.md)
+- **Academic & Design Archives:** [docs/academic/](./docs/academic/) · [docs/design/stitch-assets/](./docs/design/stitch-assets/)
+

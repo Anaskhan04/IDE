@@ -31,8 +31,24 @@ scratch/
 test-results/
 playwright-report/
 playwright/.cache/
+coverage/
 
-# Local environment secrets
+# Local environment secrets & credentials
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+.intellicode/
+
+# Temporary development scripts & local AI tool config
+tmp-*.mjs
+replace_*.mjs
+.kombai/
+
+# OS-generated files
+Thumbs.db
+desktop.ini
